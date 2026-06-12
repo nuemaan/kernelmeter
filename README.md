@@ -17,7 +17,9 @@ required dependencies.
   reference, and scores it against the roofline: the best your card could
   possibly do for that kernel's mix of math and memory traffic. 240 GB/s
   means nothing on its own; "76% of attainable" tells you how much room
-  is left.
+  is left. While the kernel runs it also samples the real clocks, power
+  and temperature through NVML, and re-scores against the ceiling the
+  card actually held.
 * `kernelmeter roofline` draws your card's roofline in the terminal and
   shows where a kernel sits on it.
 * `kernelmeter occupancy` answers "why is my occupancy 50%?" from block
@@ -118,7 +120,7 @@ kernelmeter bench mybench.py
 ```text
 kernel                    median ms      GB/s   TFLOP/s  bound    %roof   vs ref  correct
 ------------------------------------------------------------------------------------------
-my_add                       3.3393     241.2         -    mem    75.3%    1.01x     PASS
+my_add                       3.2725     246.1         -    mem    76.9%    1.03x     PASS
 ```
 
 * **correct** - your output matched the reference. If this says FAIL,
@@ -132,8 +134,39 @@ my_add                       3.3393     241.2         -    mem    75.3%    1.01x
 
 Pass `flops_per_call` too and the roofline model places your kernel
 precisely; pass `peak_tflops=...` if your kernel runs on tensor cores so
-it gets judged against the right ceiling. Raw `%peak bw` and `%fp32`
-numbers are always in the `--json` output.
+it gets judged against the right ceiling (`kernelmeter info` prints the
+derived fp16/tf32 tensor peaks for your card). Raw `%peak bw` and
+`%fp32` numbers are always in the `--json` output.
+
+When NVML is available (it ships with the driver) a second table follows
+with what the card was doing during each measurement:
+
+```text
+telemetry                    sm MHz   mem MHz   temp   power  %roof@clk
+-----------------------------------------------------------------------
+my_add                    1062/1590      5000    42C   53.1W      76.9%
+```
+
+`%roof@clk` is the same roofline score, but against the ceiling at the
+clocks the card actually held. If `%roof` looks bad but `%roof@clk` is
+high, your kernel is fine: the card is thermal or power limited, and no
+amount of kernel work will change that. A real example, cuBLAS fp32
+matmul on a 70 W T4:
+
+```text
+kernel                    median ms      GB/s   TFLOP/s  bound   %roof   vs ref  correct
+----------------------------------------------------------------------------------------
+fp32_matmul                 32.0354       6.3      4.29   comp   52.7%        -        -
+
+telemetry                    sm MHz   mem MHz   temp   power  %roof@clk
+-----------------------------------------------------------------------
+fp32_matmul                877/1590      5000    46C   70.4W      95.5%
+```
+
+53% of peak looks like a kernel problem. The telemetry shows it is not:
+the card hit its 70 W power limit and dropped to 877 MHz, and at those
+clocks the kernel was at 95.5% of what the silicon could deliver. cuBLAS
+was never the problem.
 
 Timing uses CUDA events with warmup, and the L2 cache is flushed between
 iterations so small workloads can't fake huge bandwidth numbers from
@@ -175,6 +208,9 @@ The `o` is your kernel, the `x` is the ridge point. Left of the ridge,
 more FLOPs are free: the memory traffic is the bill you are paying
 anyway. That is the whole argument for kernel fusion, in one picture.
 No GPU around? `--peak-bw` and `--peak-tflops` let you draw any card.
+`--tensor` swaps in the fp16 tensor-core roof, which moves the ridge
+point far to the left; that picture explains why tensor-core kernels
+are almost always memory-bound.
 
 ## Why is my occupancy low?
 
@@ -261,15 +297,15 @@ whether your kernels are any good:
 ## Caveats
 
 * Theoretical peaks are computed from the max boost clock the driver
-  reports. Sustained clocks under load are lower; `kernelmeter ceiling`
-  measures what you can actually reach.
-* The derived compute peak is for plain FP32 on CUDA cores. For
-  tensor-core kernels pass `peak_tflops=...` to the benchmark decorator
-  so the roofline uses the right roof.
+  reports. Sustained clocks under load are lower; the telemetry table
+  and `kernelmeter ceiling` both show what you can actually reach.
+* The tensor-core peaks are dense rates with fp16 accumulate. GeForce
+  cards run tensor cores at half rate when accumulating in fp32, and
+  sparse rates are double; pass `peak_tflops=...` when those apply.
 * The occupancy command implements the standard calculator model. Real
   occupancy can differ (launch bounds, driver decisions); confirm with
   Nsight Compute when it matters.
-* Attribute names above id 121 are best-effort against the CUDA 12.x
+* Attribute names above id 143 are best-effort against the CUDA 12.x
   headers. Values are always read live from your driver. PRs that extend
   the name table are welcome.
 
