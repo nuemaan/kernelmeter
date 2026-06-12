@@ -32,6 +32,41 @@ def fp32_cores_per_sm(major: int, minor: int) -> int:
     return 64
 
 
+# Dense tensor-core FLOPs per SM per clock, fp16 inputs with fp16
+# accumulate. Derived from published board specs (V100 125 TF, T4 65 TF,
+# A100 312 TF, 4090 330 TF, H100 SXM 989 TF, ...), which all divide out
+# to clean powers of two per SM per clock. GeForce parts run at half
+# this rate when accumulating in fp32.
+_FP16_TENSOR_FLOPS_PER_SM: dict[tuple[int, int], int] = {
+    (7, 0): 1024, (7, 2): 1024, (7, 5): 1024,
+    (8, 0): 2048, (8, 6): 1024, (8, 7): 1024, (8, 9): 1024,
+    (9, 0): 4096,
+    (12, 0): 1024, (12, 1): 1024,
+}
+
+# Same idea for tf32 (only exists on Ampere and newer).
+_TF32_TENSOR_FLOPS_PER_SM: dict[tuple[int, int], int] = {
+    (8, 0): 1024, (8, 6): 256, (8, 7): 256, (8, 9): 256,
+    (9, 0): 2048,
+    (12, 0): 256, (12, 1): 256,
+}
+
+
+def _tensor_tflops(table: dict, sm_count: int, clock_khz: int, major: int, minor: int) -> float | None:
+    rate = table.get((major, minor))
+    if rate is None:
+        return None
+    return rate * sm_count * clock_khz * 1e3 / 1e12
+
+
+def fp16_tensor_tflops(sm_count: int, clock_khz: int, major: int, minor: int) -> float | None:
+    return _tensor_tflops(_FP16_TENSOR_FLOPS_PER_SM, sm_count, clock_khz, major, minor)
+
+
+def tf32_tensor_tflops(sm_count: int, clock_khz: int, major: int, minor: int) -> float | None:
+    return _tensor_tflops(_TF32_TENSOR_FLOPS_PER_SM, sm_count, clock_khz, major, minor)
+
+
 @dataclass
 class Peaks:
     """Theoretical per-device ceilings derived from driver attributes."""
@@ -39,11 +74,15 @@ class Peaks:
     mem_bandwidth_gbs: float | None
     fp32_tflops: float | None
     compute_capability: tuple[int, int] | None
+    fp16_tensor_tflops: float | None = None
+    tf32_tensor_tflops: float | None = None
 
     def as_dict(self) -> dict:
         return {
             "theoretical_mem_bandwidth_gb_s": self.mem_bandwidth_gbs,
             "theoretical_fp32_tflops": self.fp32_tflops,
+            "theoretical_fp16_tensor_tflops": self.fp16_tensor_tflops,
+            "theoretical_tf32_tensor_tflops": self.tf32_tensor_tflops,
             "compute_capability": (
                 f"{self.compute_capability[0]}.{self.compute_capability[1]}"
                 if self.compute_capability
@@ -72,12 +111,19 @@ def derive(attrs: dict[str, int]) -> Peaks:
         )
 
     cc = None
-    flops = None
+    flops = fp16 = tf32 = None
     if "compute_capability_major" in attrs and "compute_capability_minor" in attrs:
         cc = (attrs["compute_capability_major"], attrs["compute_capability_minor"])
         if "multiprocessor_count" in attrs and "clock_rate_khz" in attrs:
-            flops = fp32_tflops(
-                attrs["multiprocessor_count"], attrs["clock_rate_khz"], cc[0], cc[1]
-            )
+            sm, clk = attrs["multiprocessor_count"], attrs["clock_rate_khz"]
+            flops = fp32_tflops(sm, clk, cc[0], cc[1])
+            fp16 = fp16_tensor_tflops(sm, clk, cc[0], cc[1])
+            tf32 = tf32_tensor_tflops(sm, clk, cc[0], cc[1])
 
-    return Peaks(mem_bandwidth_gbs=bw, fp32_tflops=flops, compute_capability=cc)
+    return Peaks(
+        mem_bandwidth_gbs=bw,
+        fp32_tflops=flops,
+        compute_capability=cc,
+        fp16_tensor_tflops=fp16,
+        tf32_tensor_tflops=tf32,
+    )
