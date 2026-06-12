@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kernelmeter"
-version = "0.1.0"
+version = "0.2.0"
 description = "Query every CUDA device attribute without profiling a kernel, and benchmark your kernels against the hardware's speed of light."
 readme = "README.md"
 license = { text = "MIT" }
