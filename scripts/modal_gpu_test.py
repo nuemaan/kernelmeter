@@ -45,10 +45,23 @@ def validate() -> dict:
     )
     report["derived"] = dev["derived"]
 
-    for example in ("/root/examples/vector_add.py", "/root/examples/softmax.py"):
+    for example in (
+        "/root/examples/vector_add.py",
+        "/root/examples/softmax.py",
+        "/root/examples/matmul.py",
+    ):
         print(f"\n=== kernelmeter bench {example} ===")
         report[f"bench_rc:{example.rsplit('/', 1)[-1]}"] = cli.main(["bench", example])
         kb.REGISTRY.clear()  # registry is process-global; reset between files
+
+    print("\n=== kernelmeter roofline ===")
+    report["roofline_rc"] = cli.main(["roofline", "--ai", "0.33"])
+
+    print("\n=== kernelmeter occupancy (live device) ===")
+    report["occupancy_rc"] = cli.main(["occupancy", "--block", "256", "--regs", "40"])
+
+    print("\n=== kernelmeter ceiling ===")
+    report["ceiling_rc"] = cli.main(["ceiling", "--mb", "128", "--matmul-n", "2048"])
 
     return report
 
