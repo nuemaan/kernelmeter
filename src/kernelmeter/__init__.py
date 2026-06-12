@@ -3,9 +3,11 @@ benchmarks measured against the hardware's speed of light."""
 
 from .bench import REGISTRY, BenchResult, BenchSpec, benchmark, device_peaks, run, run_registry
 from .cudadrv import CudaDriverError, CudaNotAvailableError, Driver
+from . import occupancy, roofline
+from .occupancy import Occupancy
 from .peaks import Peaks
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "BenchResult",
@@ -13,10 +15,13 @@ __all__ = [
     "CudaDriverError",
     "CudaNotAvailableError",
     "Driver",
+    "Occupancy",
     "Peaks",
     "REGISTRY",
     "benchmark",
     "device_peaks",
+    "occupancy",
+    "roofline",
     "run",
     "run_registry",
     "__version__",

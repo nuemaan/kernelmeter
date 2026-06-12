@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from . import attrs as _attrs
 from . import peaks as _peaks
+from . import roofline as _roofline
 from .cudadrv import CudaNotAvailableError, Driver
 
 
@@ -29,6 +30,7 @@ class BenchSpec:
     ref: Callable | None = None
     bytes_per_call: Callable[..., int] | int | None = None
     flops_per_call: Callable[..., int] | int | None = None
+    peak_tflops: float | None = None  # override for tensor-core work
     warmup: int = 10
     iters: int = 100
 
@@ -41,6 +43,9 @@ class BenchResult:
     ms_min: float
     gbps: float | None = None
     tflops: float | None = None
+    intensity: float | None = None
+    bound: str | None = None
+    pct_roofline: float | None = None
     pct_peak_bw: float | None = None
     pct_peak_fp32: float | None = None
     ref_ms_median: float | None = None
@@ -63,11 +68,16 @@ def benchmark(
     ref: Callable | None = None,
     bytes_per_call: Callable[..., int] | int | None = None,
     flops_per_call: Callable[..., int] | int | None = None,
+    peak_tflops: float | None = None,
     warmup: int = 10,
     iters: int = 100,
 ):
     """Register a function for ``kernelmeter bench``. Also usable directly:
-    the decorated function is returned unchanged."""
+    the decorated function is returned unchanged.
+
+    peak_tflops replaces the derived fp32 peak in the roofline when your
+    kernel runs on other units (tensor cores, fp16, fp64).
+    """
 
     def deco(fn: Callable) -> Callable:
         REGISTRY.append(
@@ -78,6 +88,7 @@ def benchmark(
                 ref=ref,
                 bytes_per_call=bytes_per_call,
                 flops_per_call=flops_per_call,
+                peak_tflops=peak_tflops,
                 warmup=warmup,
                 iters=iters,
             )
@@ -119,6 +130,51 @@ def _resolve(metric: Callable[..., int] | int | None, args: tuple) -> int | None
     if callable(metric):
         return metric(*args)
     return int(metric)
+
+
+def roofline_score(
+    nbytes: int | None,
+    nflops: int | None,
+    gbps: float | None,
+    tflops: float | None,
+    peaks: _peaks.Peaks,
+    peak_tflops_override: float | None = None,
+) -> tuple[float | None, str | None, float | None]:
+    """(intensity, bound, pct of attainable) given whatever metrics exist.
+
+    With only bytes the kernel is treated as memory-bound, with only flops
+    as compute-bound. With both, the roofline decides.
+    """
+    peak_tf = peak_tflops_override or peaks.fp32_tflops
+    peak_bw = peaks.mem_bandwidth_gbs
+
+    if nbytes and nflops and peak_tf and peak_bw and tflops:
+        ai = _roofline.intensity(nflops, nbytes)
+        attainable = _roofline.attainable_tflops(ai, peak_tf, peak_bw)
+        return ai, _roofline.bound(ai, peak_tf, peak_bw), 100.0 * tflops / attainable
+    if nbytes and gbps and peak_bw:
+        return None, "mem", 100.0 * gbps / peak_bw
+    if nflops and tflops and peak_tf:
+        return None, "comp", 100.0 * tflops / peak_tf
+    return None, None, None
+
+
+def diff_results(baseline: list[dict], results: list["BenchResult"], threshold_pct: float = 5.0):
+    """Compare a run against a saved baseline. Returns (rows, regressions)
+    where rows are (name, old_ms, new_ms, delta_pct) and regressions lists
+    names that got slower by more than the threshold."""
+    old = {r["name"]: r for r in baseline}
+    rows = []
+    regressions = []
+    for r in results:
+        if r.error or r.name not in old:
+            continue
+        old_ms = old[r.name]["ms_median"]
+        delta = 100.0 * (r.ms_median - old_ms) / old_ms if old_ms else 0.0
+        rows.append((r.name, old_ms, r.ms_median, delta))
+        if delta > threshold_pct:
+            regressions.append(r.name)
+    return rows, regressions
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +245,9 @@ def run(spec: BenchSpec, peaks: _peaks.Peaks | None = None, flush_l2: bool = Tru
     nflops = _resolve(spec.flops_per_call, args)
     gbps = achieved_gbps(nbytes, ms_median) if nbytes else None
     tflops = achieved_tflops(nflops, ms_median) if nflops else None
+    ai, kernel_bound, pct_roof = roofline_score(
+        nbytes, nflops, gbps, tflops, peaks, spec.peak_tflops
+    )
 
     ref_ms = speedup = None
     if spec.ref is not None:
@@ -203,6 +262,9 @@ def run(spec: BenchSpec, peaks: _peaks.Peaks | None = None, flush_l2: bool = Tru
         ms_min=ms_min,
         gbps=gbps,
         tflops=tflops,
+        intensity=ai,
+        bound=kernel_bound,
+        pct_roofline=pct_roof,
         pct_peak_bw=pct_of_peak(gbps, peaks.mem_bandwidth_gbs) if gbps else None,
         pct_peak_fp32=pct_of_peak(tflops, peaks.fp32_tflops) if tflops else None,
         ref_ms_median=ref_ms,
