@@ -46,8 +46,14 @@ class BenchResult:
     intensity: float | None = None
     bound: str | None = None
     pct_roofline: float | None = None
+    pct_roof_sustained: float | None = None
     pct_peak_bw: float | None = None
     pct_peak_fp32: float | None = None
+    sm_clock_mhz: float | None = None
+    max_sm_clock_mhz: int | None = None
+    mem_clock_mhz: float | None = None
+    temperature_c: int | None = None
+    power_w: float | None = None
     ref_ms_median: float | None = None
     speedup_vs_ref: float | None = None
     correct: bool | None = None
@@ -159,6 +165,21 @@ def roofline_score(
     return None, None, None
 
 
+def sustained_peaks(peaks: _peaks.Peaks, telemetry, peak_tflops_override: float | None = None) -> _peaks.Peaks:
+    """Scale the theoretical peaks down to the clocks the card actually
+    held while the kernel ran."""
+    tf = peak_tflops_override or peaks.fp32_tflops
+    return _peaks.Peaks(
+        mem_bandwidth_gbs=(
+            peaks.mem_bandwidth_gbs * telemetry.mem_clock_fraction
+            if peaks.mem_bandwidth_gbs
+            else None
+        ),
+        fp32_tflops=tf * telemetry.sm_clock_fraction if tf else None,
+        compute_capability=peaks.compute_capability,
+    )
+
+
 def diff_results(baseline: list[dict], results: list["BenchResult"], threshold_pct: float = 5.0):
     """Compare a run against a saved baseline. Returns (rows, regressions)
     where rows are (name, old_ms, new_ms, delta_pct) and regressions lists
@@ -238,7 +259,25 @@ def run(spec: BenchSpec, peaks: _peaks.Peaks | None = None, flush_l2: bool = Tru
     if spec.ref is not None:
         correct, max_err = _check_correctness(spec, args)
 
+    monitor = None
+    try:
+        from . import nvml as _nvml
+
+        monitor = _nvml.Monitor()
+        monitor.start()
+    except Exception:
+        monitor = None
+
     times = _time_fn(spec.fn, args, spec.warmup, spec.iters, flush_l2)
+
+    telemetry = None
+    if monitor is not None:
+        try:
+            telemetry = monitor.stop()
+            monitor.close()
+        except Exception:
+            telemetry = None
+
     ms_mean, ms_median, ms_min = summarize_times(times)
 
     nbytes = _resolve(spec.bytes_per_call, args)
@@ -248,6 +287,11 @@ def run(spec: BenchSpec, peaks: _peaks.Peaks | None = None, flush_l2: bool = Tru
     ai, kernel_bound, pct_roof = roofline_score(
         nbytes, nflops, gbps, tflops, peaks, spec.peak_tflops
     )
+
+    pct_sustained = None
+    if telemetry is not None:
+        scaled = sustained_peaks(peaks, telemetry, spec.peak_tflops)
+        pct_sustained = roofline_score(nbytes, nflops, gbps, tflops, scaled)[2]
 
     ref_ms = speedup = None
     if spec.ref is not None:
@@ -265,8 +309,14 @@ def run(spec: BenchSpec, peaks: _peaks.Peaks | None = None, flush_l2: bool = Tru
         intensity=ai,
         bound=kernel_bound,
         pct_roofline=pct_roof,
+        pct_roof_sustained=pct_sustained,
         pct_peak_bw=pct_of_peak(gbps, peaks.mem_bandwidth_gbs) if gbps else None,
         pct_peak_fp32=pct_of_peak(tflops, peaks.fp32_tflops) if tflops else None,
+        sm_clock_mhz=telemetry.sm_clock_mhz if telemetry else None,
+        max_sm_clock_mhz=telemetry.max_sm_clock_mhz if telemetry else None,
+        mem_clock_mhz=telemetry.mem_clock_mhz if telemetry else None,
+        temperature_c=telemetry.temperature_c if telemetry else None,
+        power_w=telemetry.power_w if telemetry else None,
         ref_ms_median=ref_ms,
         speedup_vs_ref=speedup,
         correct=correct,

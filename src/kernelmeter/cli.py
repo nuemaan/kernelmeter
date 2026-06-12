@@ -30,6 +30,28 @@ def _device_attrs(ordinal: int = 0) -> dict[str, int]:
     return _attrs.query_all(driver, driver.device(ordinal))
 
 
+def _print_live_telemetry(ordinal: int) -> None:
+    """Current clocks/temp/power via NVML; quietly skipped when absent."""
+    try:
+        from . import nvml as _nvml
+
+        n = _nvml.Nvml()
+    except Exception:
+        return
+    try:
+        h = n.device(ordinal)
+        print(
+            f"  live: sm {n.sm_clock_mhz(h)}/{n.max_sm_clock_mhz(h)} MHz, "
+            f"mem {n.mem_clock_mhz(h)}/{n.max_mem_clock_mhz(h)} MHz, "
+            f"{n.temperature_c(h)}C, "
+            f"{n.power_w(h):.1f}/{n.power_limit_w(h):.0f}W"
+        )
+    except Exception:
+        pass
+    finally:
+        n.close()
+
+
 # ---------------------------------------------------------------------------
 # info
 # ---------------------------------------------------------------------------
@@ -79,6 +101,17 @@ def cmd_info(args: argparse.Namespace) -> int:
             "  theoretical FP32 peak     : "
             + _fmt(derived["theoretical_fp32_tflops"], " TFLOP/s", nd=2)
         )
+        if derived.get("theoretical_fp16_tensor_tflops"):
+            print(
+                "  theoretical fp16 tensor   : "
+                + _fmt(derived["theoretical_fp16_tensor_tflops"], " TFLOP/s (dense)", nd=2)
+            )
+        if derived.get("theoretical_tf32_tensor_tflops"):
+            print(
+                "  theoretical tf32 tensor   : "
+                + _fmt(derived["theoretical_tf32_tensor_tflops"], " TFLOP/s (dense)", nd=2)
+            )
+        _print_live_telemetry(dev["ordinal"])
         print(f"\n  {'attribute':<48} value")
         print(f"  {'-' * 48} {'-' * 12}")
         for name, value in dev["attributes"].items():
@@ -137,6 +170,27 @@ def cmd_bench(args: argparse.Namespace) -> int:
                 f"{_fmt(r.pct_roofline, '%'):>7} {speedup:>8} {correct:>8}"
             )
 
+        if any(r.sm_clock_mhz for r in results):
+            print()
+            theader = (
+                f"{'telemetry':<24} {'sm MHz':>10} {'mem MHz':>9} "
+                f"{'temp':>6} {'power':>7} {'%roof@clk':>10}"
+            )
+            print(theader)
+            print("-" * len(theader))
+            for r in results:
+                if not r.sm_clock_mhz:
+                    continue
+                print(
+                    f"{r.name:<24} {r.sm_clock_mhz:>5.0f}/{r.max_sm_clock_mhz:<4} "
+                    f"{_fmt(r.mem_clock_mhz, nd=0):>9} {r.temperature_c or '-':>5}C "
+                    f"{_fmt(r.power_w, 'W'):>7} {_fmt(r.pct_roof_sustained, '%'):>10}"
+                )
+            print(
+                "%roof@clk scores against the ceiling at the clocks the card "
+                "actually held during the run"
+            )
+
     ok = all(r.error is None and r.correct in (None, True) for r in results)
 
     if args.compare:
@@ -169,7 +223,17 @@ def cmd_roofline(args: argparse.Namespace) -> int:
             name = dev.name
             peaks = _peaks.derive(_attrs.query_all(driver, dev))
             peak_bw = peak_bw or peaks.mem_bandwidth_gbs
-            peak_tf = peak_tf or peaks.fp32_tflops
+            if args.tensor:
+                if peaks.fp16_tensor_tflops is None:
+                    print(
+                        "error: no tensor-core rate known for this card; "
+                        "pass --peak-tflops instead.",
+                        file=sys.stderr,
+                    )
+                    return 1
+                peak_tf = peak_tf or peaks.fp16_tensor_tflops
+            else:
+                peak_tf = peak_tf or peaks.fp32_tflops
         except CudaNotAvailableError:
             pass
     if not peak_bw or not peak_tf:
@@ -183,8 +247,9 @@ def cmd_roofline(args: argparse.Namespace) -> int:
     ridge = _roofline.ridge_point(peak_tf, peak_bw)
     if name:
         print(f"Device {args.device}: {name}")
+    roof_kind = "fp16 tensor" if args.tensor else "fp32"
     print(f"  peak bandwidth : {peak_bw:.1f} GB/s")
-    print(f"  peak compute   : {peak_tf:.2f} TFLOP/s")
+    print(f"  peak compute   : {peak_tf:.2f} TFLOP/s ({roof_kind})")
     print(f"  ridge point    : {ridge:.1f} flop/byte\n")
     for line in _roofline.render(peak_tf, peak_bw, ai=args.ai):
         print(line)
@@ -278,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     p_roof = sub.add_parser("roofline", help="draw the device roofline")
     p_roof.add_argument("--ai", type=float, help="mark a kernel at this arithmetic intensity")
     p_roof.add_argument("--device", type=int, default=0)
+    p_roof.add_argument("--tensor", action="store_true", help="use the fp16 tensor-core roof")
     p_roof.add_argument("--peak-bw", type=float, help="override bandwidth in GB/s")
     p_roof.add_argument("--peak-tflops", type=float, help="override compute in TFLOP/s")
     p_roof.set_defaults(func=cmd_roofline)

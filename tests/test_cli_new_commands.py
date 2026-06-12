@@ -20,6 +20,13 @@ def test_roofline_from_device(patched_driver, capsys):
     assert "*" in out  # the chart got drawn
 
 
+def test_roofline_tensor_roof(patched_driver, capsys):
+    assert cli.main(["roofline", "--tensor"]) == 0
+    out = capsys.readouterr().out
+    assert "fp16 tensor" in out
+    assert "142.33 TFLOP/s" in out
+
+
 def test_roofline_manual_peaks_need_no_device(monkeypatch, capsys):
     from kernelmeter.cudadrv import CudaNotAvailableError
 
