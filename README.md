@@ -1,5 +1,10 @@
 # kernelmeter
 
+[![PyPI](https://img.shields.io/pypi/v/kernelmeter)](https://pypi.org/project/kernelmeter/)
+[![CI](https://github.com/nuemaan/kernelmeter/actions/workflows/ci.yml/badge.svg)](https://github.com/nuemaan/kernelmeter/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/kernelmeter)](https://pypi.org/project/kernelmeter/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Small tools for one question: **is my GPU kernel actually good, and if
 not, what exactly is holding it back?** All in one package with zero
 required dependencies.
@@ -279,6 +284,10 @@ The tests fake the driver, so they run anywhere, no GPU needed. CI runs
 them on plain GitHub runners. For an end-to-end check on a real GPU there
 is a [Modal](https://modal.com) script: `modal run scripts/modal_gpu_test.py`.
 The numbers in this README come from that script on a T4.
+
+Releases are tag-driven: bump the version in `pyproject.toml`, add a
+[CHANGELOG.md](CHANGELOG.md) entry, push a `v*` tag. CI tests, builds and
+publishes to PyPI through trusted publishing.
 
 ## License
 
