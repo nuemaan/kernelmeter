@@ -24,6 +24,13 @@ def test_unknown_but_supported_ids_get_generic_names(fake_driver):
     assert result["attribute_150"] == 7
 
 
+def test_cuda12_range_names(fake_driver):
+    dev = fake_driver.device(0)
+    result = attrs.query_all(fake_driver, dev)
+    assert result["numa_id"] == -1
+    assert result["gpu_pci_device_id"] == 0x1EB810DE
+
+
 def test_device_metadata(fake_driver):
     dev = fake_driver.device(0)
     assert dev.name == "NVIDIA GeForce RTX 3090"
