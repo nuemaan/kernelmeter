@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 - 2026-06-14
+
+- named device attributes 149-154 (d3d12_cig_streams_supported,
+  dma_buf_mmap_supported, and the logical_endpoint_* family), verified
+  against the CUDA 13.x driver enum. CU_DEVICE_ATTRIBUTE_MAX moves up with
+  each toolkit release, so the table now tracks the latest defined ids and
+  the probe still surfaces anything newer as attribute_<id>.
+
 ## 0.4.0 - 2026-06-13
 
 - `info` now adds an NVML section with facts the driver attribute enum

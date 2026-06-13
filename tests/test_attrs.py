@@ -20,8 +20,8 @@ def test_unsupported_ids_are_skipped(fake_driver):
 def test_unknown_but_supported_ids_get_generic_names(fake_driver):
     dev = fake_driver.device(0)
     result = attrs.query_all(fake_driver, dev)
-    # id 155 succeeds in the fake but has no name in our table
-    assert result["attribute_155"] == 7
+    # id 160 succeeds in the fake but has no name in our table
+    assert result["attribute_160"] == 7
 
 
 def test_cuda12_range_names(fake_driver):
@@ -29,13 +29,16 @@ def test_cuda12_range_names(fake_driver):
     result = attrs.query_all(fake_driver, dev)
     assert result["numa_id"] == -1
     assert result["gpu_pci_device_id"] == 0x1EB810DE
-    # last named driver attribute before the CU_DEVICE_ATTRIBUTE_MAX sentinel
     assert result["atomic_reduction_supported"] == 1
+    # a CUDA 13.x attribute past the old 0.3.1 table
+    assert result["dma_buf_mmap_supported"] == 1
 
 
 def test_max_sentinel_is_not_named():
-    # 149 is CU_DEVICE_ATTRIBUTE_MAX, not a real attribute
-    assert 149 not in attrs.KNOWN_ATTRS
+    # 155 is CU_DEVICE_ATTRIBUTE_MAX as of CUDA 13.x, not a real attribute
+    assert 155 not in attrs.KNOWN_ATTRS
+    # the last real attribute we name
+    assert attrs.KNOWN_ATTRS[154] == "logical_endpoint_unicast_access_on_owner_device_supported"
 
 
 def test_device_metadata(fake_driver):

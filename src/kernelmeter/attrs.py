@@ -159,9 +159,16 @@ KNOWN_ATTRS: dict[int, str] = {
     146: "host_alloc_dma_buf_supported",
     147: "only_partial_host_native_atomic_supported",
     148: "atomic_reduction_supported",
-    # 149 is CU_DEVICE_ATTRIBUTE_MAX, a sentinel rather than a real
-    # attribute, so it stops here. Anything the driver adds beyond this is
-    # still reported generically as attribute_<id> by the probe below.
+    149: "d3d12_cig_streams_supported",
+    150: "dma_buf_mmap_supported",
+    151: "logical_endpoint_unicast_supported",
+    152: "logical_endpoint_multicast_supported",
+    153: "logical_endpoint_counted_ops_supported",
+    154: "logical_endpoint_unicast_access_on_owner_device_supported",
+    # CU_DEVICE_ATTRIBUTE_MAX (155 as of CUDA 13.x) is a sentinel that
+    # moves up with each toolkit release, not a real attribute. Names stop
+    # at the last defined value; anything newer the driver reports is still
+    # surfaced generically as attribute_<id> by the probe below.
 }
 
 

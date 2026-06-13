@@ -22,8 +22,9 @@ RTX3090_ATTRS = {
     106: 16,        # max_blocks_per_multiprocessor
     131: -1,        # numa_id (-1: not a NUMA system)
     139: 0x1EB810DE,  # gpu_pci_device_id (device << 16 | vendor)
-    148: 1,         # atomic_reduction_supported (last named driver attr)
-    155: 7,         # an attribute newer than our name table
+    148: 1,         # atomic_reduction_supported
+    150: 1,         # dma_buf_mmap_supported (added to the table in 0.4.1)
+    160: 7,         # an attribute newer than our name table
 }
 
 
