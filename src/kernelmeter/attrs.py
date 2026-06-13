@@ -154,6 +154,14 @@ KNOWN_ATTRS: dict[int, str] = {
     141: "host_numa_virtual_memory_management_supported",
     142: "host_numa_memory_pools_supported",
     143: "host_numa_multinode_ipc_supported",
+    144: "host_memory_pools_supported",
+    145: "host_virtual_memory_management_supported",
+    146: "host_alloc_dma_buf_supported",
+    147: "only_partial_host_native_atomic_supported",
+    148: "atomic_reduction_supported",
+    # 149 is CU_DEVICE_ATTRIBUTE_MAX, a sentinel rather than a real
+    # attribute, so it stops here. Anything the driver adds beyond this is
+    # still reported generically as attribute_<id> by the probe below.
 }
 
 

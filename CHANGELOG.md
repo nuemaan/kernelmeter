@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 - 2026-06-13
+
+- named device attributes 144-148 (host_memory_pools_supported,
+  host_virtual_memory_management_supported, host_alloc_dma_buf_supported,
+  only_partial_host_native_atomic_supported, atomic_reduction_supported),
+  covering the driver enum up to the CU_DEVICE_ATTRIBUTE_MAX sentinel
+
 ## 0.3.0 - 2026-06-12
 
 - live telemetry through NVML: bench samples SM/memory clocks,
