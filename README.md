@@ -60,10 +60,10 @@ Device 0: Tesla T4 (14.6 GiB)
   theoretical FP32 peak     : 8.14 TFLOP/s
   theoretical fp16 tensor   : 65.13 TFLOP/s (dense)
   architecture (nvml)       : Turing, 2560 CUDA cores
-  pcie link (nvml)          : gen3/3 x16/16
-  memory in use (nvml)      : 328 / 15110 MiB
+  pcie link (nvml)          : gen1/3 x8/16
+  memory in use (nvml)      : 450 / 15360 MiB
   ecc (nvml)                : on
-  vbios (nvml)              : 90.04.38.00.A1
+  vbios (nvml)              : 90.04.96.00.02
 
   attribute                                        value
   ------------------------------------------------ ------------
@@ -85,8 +85,9 @@ The `(nvml)` lines come from a second source: NVML, the library behind
 `nvidia-smi`, also shipped with the driver. They surface facts the driver
 attribute enum doesn't have (architecture name, real CUDA core count,
 PCIe link, live memory use, ECC, VBIOS) and are skipped silently if NVML
-isn't present. Add `--json` for machine-readable output; the NVML block
-lands under `devices[].nvml`.
+isn't present. (The `gen1/3 x8/16` above is the live link: an idle T4
+drops to a lower PCIe state and ramps up under load.) Add `--json` for
+machine-readable output; the NVML block lands under `devices[].nvml`.
 
 ## Benchmarking a kernel
 
