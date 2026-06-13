@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - 2026-06-13
+
+- `info` now adds an NVML section with facts the driver attribute enum
+  doesn't expose: architecture name, real CUDA core count, PCIe link
+  (current/max gen and width), live memory in use, ECC state, VBIOS
+  version. NVML ships with the driver, so still no toolkit dependency.
+  Present in the json output under `devices[].nvml`; skipped silently
+  when NVML isn't available.
+- new `kernelmeter.extras` module and `DeviceExtras` for programmatic use.
+
 ## 0.3.1 - 2026-06-13
 
 - named device attributes 144-148 (host_memory_pools_supported,

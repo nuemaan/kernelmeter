@@ -58,6 +58,12 @@ Device 0: Tesla T4 (14.6 GiB)
   compute capability        : 7.5
   theoretical mem bandwidth : 320.1 GB/s
   theoretical FP32 peak     : 8.14 TFLOP/s
+  theoretical fp16 tensor   : 65.13 TFLOP/s (dense)
+  architecture (nvml)       : Turing, 2560 CUDA cores
+  pcie link (nvml)          : gen3/3 x16/16
+  memory in use (nvml)      : 328 / 15110 MiB
+  ecc (nvml)                : on
+  vbios (nvml)              : 90.04.38.00.A1
 
   attribute                                        value
   ------------------------------------------------ ------------
@@ -66,16 +72,21 @@ Device 0: Tesla T4 (14.6 GiB)
   max_shared_memory_per_block                      49152
   warp_size                                        32
   clock_rate_khz                                   1590000
-  ...                                              (147 attributes total)
+  ...                                              (148 attributes total)
 ```
 
-These are the same values Nsight Compute shows as `device__attribute_*`,
-except you don't need to profile a kernel to see them. Add `--json` for
-machine-readable output.
+The `attribute` table is read straight from the driver via
+`cuDeviceGetAttribute`, the same values Nsight Compute shows as
+`device__attribute_*`, but you don't need to profile a kernel to see them.
+Every id is probed live, so the output matches the machine you run it on;
+ids newer than the bundled name table show up as `attribute_<id>`.
 
-Every attribute id is probed against the live driver, so the output always
-matches the machine you run it on. Ids newer than the bundled name table
-still show up, just under a generic `attribute_<id>` name.
+The `(nvml)` lines come from a second source: NVML, the library behind
+`nvidia-smi`, also shipped with the driver. They surface facts the driver
+attribute enum doesn't have (architecture name, real CUDA core count,
+PCIe link, live memory use, ECC, VBIOS) and are skipped silently if NVML
+isn't present. Add `--json` for machine-readable output; the NVML block
+lands under `devices[].nvml`.
 
 ## Benchmarking a kernel
 

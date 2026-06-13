@@ -44,6 +44,7 @@ def validate() -> dict:
         k for k in dev["attributes"] if k.startswith("attribute_")
     )
     report["derived"] = dev["derived"]
+    report["nvml"] = dev["nvml"]
 
     for example in (
         "/root/examples/vector_add.py",

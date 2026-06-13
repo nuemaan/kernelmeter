@@ -31,6 +31,46 @@ def test_info_human_readable(patched_driver, capsys):
     assert "GB/s" in out
 
 
+@pytest.fixture
+def patched_nvml(monkeypatch):
+    from kernelmeter import extras, nvml
+
+    from test_nvml import FakeNvmlLib
+
+    real_nvml = nvml.Nvml  # capture before patching to avoid self-recursion
+    monkeypatch.setattr(
+        extras._nvml, "Nvml", lambda *a, **k: real_nvml(lib=FakeNvmlLib())
+    )
+
+
+def test_info_json_includes_nvml(patched_driver, patched_nvml, capsys):
+    assert cli.main(["info", "--json"]) == 0
+    dev = json.loads(capsys.readouterr().out)["devices"][0]
+    assert dev["nvml"]["architecture"] == "Turing"
+    assert dev["nvml"]["num_gpu_cores"] == 2560
+    assert dev["nvml"]["pcie_gen_max"] == 3
+
+
+def test_info_human_shows_nvml(patched_driver, patched_nvml, capsys):
+    assert cli.main(["info"]) == 0
+    out = capsys.readouterr().out
+    assert "Turing" in out
+    assert "2560 CUDA cores" in out
+    assert "pcie link" in out
+
+
+def test_info_json_nvml_null_without_nvml(patched_driver, monkeypatch, capsys):
+    from kernelmeter import extras, nvml
+
+    def boom(*_a, **_k):
+        raise nvml.NvmlNotAvailableError("no driver")
+
+    monkeypatch.setattr(extras._nvml, "Nvml", boom)
+    assert cli.main(["info", "--json"]) == 0
+    dev = json.loads(capsys.readouterr().out)["devices"][0]
+    assert dev["nvml"] is None
+
+
 def test_info_without_driver(monkeypatch, capsys):
     from kernelmeter.cudadrv import CudaNotAvailableError
 

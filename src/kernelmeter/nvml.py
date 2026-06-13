@@ -16,9 +16,40 @@ import threading
 from dataclasses import dataclass
 
 NVML_SUCCESS = 0
+NVML_ERROR_NOT_SUPPORTED = 3
 NVML_CLOCK_SM = 1
 NVML_CLOCK_MEM = 2
 NVML_TEMPERATURE_GPU = 0
+NVML_FEATURE_ENABLED = 1
+
+# nvmlDeviceArchitecture_t
+ARCH_NAMES = {
+    2: "Kepler",
+    3: "Maxwell",
+    4: "Pascal",
+    5: "Volta",
+    6: "Turing",
+    7: "Ampere",
+    8: "Ada Lovelace",
+    9: "Hopper",
+    10: "Blackwell",
+}
+
+# nvmlBrandType_t (common entries)
+BRAND_NAMES = {
+    0: "Unknown",
+    1: "Quadro",
+    2: "Tesla",
+    3: "NVS",
+    4: "GRID",
+    5: "GeForce",
+    6: "Titan",
+    7: "NVIDIA vApps",
+    8: "NVIDIA vPC",
+    9: "NVIDIA vCS",
+    10: "NVIDIA vWS",
+    11: "NVIDIA Cloud Gaming",
+}
 
 
 class NvmlError(RuntimeError):
@@ -28,6 +59,14 @@ class NvmlError(RuntimeError):
 
 class NvmlNotAvailableError(RuntimeError):
     pass
+
+
+class _Memory(ctypes.Structure):
+    _fields_ = [
+        ("total", ctypes.c_ulonglong),
+        ("free", ctypes.c_ulonglong),
+        ("used", ctypes.c_ulonglong),
+    ]
 
 
 def load_library() -> ctypes.CDLL:
@@ -73,6 +112,23 @@ class Nvml:
         self._check(func_name, fn(handle, *args, ctypes.byref(out)))
         return out.value
 
+    def _uint_query_opt(self, func_name: str, handle, *args) -> int | None:
+        """Like _uint_query but returns None when the card doesn't support
+        the query (e.g. consumer cards have no ECC), instead of raising."""
+        out = ctypes.c_uint(0)
+        fn = getattr(self._lib, func_name)
+        code = fn(handle, *args, ctypes.byref(out))
+        if code == NVML_ERROR_NOT_SUPPORTED:
+            return None
+        self._check(func_name, code)
+        return out.value
+
+    def _str_query(self, func_name: str, *args, length: int = 96) -> str:
+        buf = ctypes.create_string_buffer(length)
+        fn = getattr(self._lib, func_name)
+        self._check(func_name, fn(*args, buf, ctypes.c_uint(length)))
+        return buf.value.decode("utf-8", errors="replace")
+
     def sm_clock_mhz(self, handle) -> int:
         return self._uint_query("nvmlDeviceGetClockInfo", handle, NVML_CLOCK_SM)
 
@@ -93,6 +149,52 @@ class Nvml:
 
     def power_limit_w(self, handle) -> float:
         return self._uint_query("nvmlDeviceGetEnforcedPowerLimit", handle) / 1000.0
+
+    # ---- static device facts the driver attribute enum does not expose ----
+
+    def architecture(self, handle) -> int | None:
+        return self._uint_query_opt("nvmlDeviceGetArchitecture", handle)
+
+    def brand(self, handle) -> int | None:
+        return self._uint_query_opt("nvmlDeviceGetBrand", handle)
+
+    def num_gpu_cores(self, handle) -> int | None:
+        # NVML 11.8+. Older drivers don't have it -> AttributeError on the symbol.
+        if not hasattr(self._lib, "nvmlDeviceGetNumGpuCores"):
+            return None
+        return self._uint_query_opt("nvmlDeviceGetNumGpuCores", handle)
+
+    def memory_info(self, handle) -> tuple[int, int, int]:
+        mem = _Memory()
+        self._check(
+            "nvmlDeviceGetMemoryInfo",
+            self._lib.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(mem)),
+        )
+        return mem.total, mem.free, mem.used
+
+    def pcie_link(self, handle) -> tuple[int | None, int | None, int | None, int | None]:
+        """(current gen, max gen, current width, max width)."""
+        return (
+            self._uint_query_opt("nvmlDeviceGetCurrPcieLinkGeneration", handle),
+            self._uint_query_opt("nvmlDeviceGetMaxPcieLinkGeneration", handle),
+            self._uint_query_opt("nvmlDeviceGetCurrPcieLinkWidth", handle),
+            self._uint_query_opt("nvmlDeviceGetMaxPcieLinkWidth", handle),
+        )
+
+    def ecc_enabled(self, handle) -> bool | None:
+        cur = ctypes.c_uint(0)
+        pend = ctypes.c_uint(0)
+        code = self._lib.nvmlDeviceGetEccMode(handle, ctypes.byref(cur), ctypes.byref(pend))
+        if code == NVML_ERROR_NOT_SUPPORTED:
+            return None
+        self._check("nvmlDeviceGetEccMode", code)
+        return cur.value == NVML_FEATURE_ENABLED
+
+    def vbios_version(self, handle) -> str:
+        return self._str_query("nvmlDeviceGetVbiosVersion", handle)
+
+    def driver_version(self) -> str:
+        return self._str_query("nvmlSystemGetDriverVersion")
 
 
 @dataclass

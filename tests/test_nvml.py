@@ -45,6 +45,54 @@ class FakeNvmlLib:
         ptr._obj.value = 70000
         return NVML_SUCCESS
 
+    # static device facts (modelled on a Tesla T4)
+    def nvmlDeviceGetArchitecture(self, handle, ptr):
+        ptr._obj.value = 6  # Turing
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetBrand(self, handle, ptr):
+        ptr._obj.value = 2  # Tesla
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetNumGpuCores(self, handle, ptr):
+        ptr._obj.value = 2560
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetMemoryInfo(self, handle, ptr):
+        ptr._obj.total = 15843721216
+        ptr._obj.free = 15500000000
+        ptr._obj.used = 343721216
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetCurrPcieLinkGeneration(self, handle, ptr):
+        ptr._obj.value = 3
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetMaxPcieLinkGeneration(self, handle, ptr):
+        ptr._obj.value = 3
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetCurrPcieLinkWidth(self, handle, ptr):
+        ptr._obj.value = 16
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetMaxPcieLinkWidth(self, handle, ptr):
+        ptr._obj.value = 16
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetEccMode(self, handle, cur, pend):
+        cur._obj.value = 1  # enabled
+        pend._obj.value = 1
+        return NVML_SUCCESS
+
+    def nvmlDeviceGetVbiosVersion(self, handle, buf, length):
+        buf.value = b"90.04.38.00.03"
+        return NVML_SUCCESS
+
+    def nvmlSystemGetDriverVersion(self, buf, length):
+        buf.value = b"535.104.05"
+        return NVML_SUCCESS
+
 
 def test_wrapper_reads_values():
     n = nvml.Nvml(lib=FakeNvmlLib())
@@ -65,6 +113,31 @@ def test_error_code_raises():
     n = nvml.Nvml(lib=Broken())
     with pytest.raises(nvml.NvmlError):
         n.temperature_c(n.device(0))
+
+
+def test_static_device_facts():
+    n = nvml.Nvml(lib=FakeNvmlLib())
+    h = n.device(0)
+    assert nvml.ARCH_NAMES[n.architecture(h)] == "Turing"
+    assert nvml.BRAND_NAMES[n.brand(h)] == "Tesla"
+    assert n.num_gpu_cores(h) == 2560
+    total, free, used = n.memory_info(h)
+    assert total == 15843721216
+    assert used == 343721216
+    assert n.pcie_link(h) == (3, 3, 16, 16)
+    assert n.ecc_enabled(h) is True
+    assert n.vbios_version(h) == "90.04.38.00.03"
+    assert n.driver_version() == "535.104.05"
+
+
+def test_unsupported_field_returns_none():
+    # consumer cards return NOT_SUPPORTED (3) for ECC
+    class NoEcc(FakeNvmlLib):
+        def nvmlDeviceGetEccMode(self, handle, cur, pend):
+            return nvml.NVML_ERROR_NOT_SUPPORTED
+
+    n = nvml.Nvml(lib=NoEcc())
+    assert n.ecc_enabled(n.device(0)) is None
 
 
 def test_summarize_samples():

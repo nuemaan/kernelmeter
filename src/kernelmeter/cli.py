@@ -57,22 +57,53 @@ def _print_live_telemetry(ordinal: int) -> None:
 # ---------------------------------------------------------------------------
 
 def gather_info(driver: Driver) -> dict:
+    from . import extras as _extras
+
     major, minor = driver.driver_version()
     devices = []
     for ordinal in range(driver.device_count()):
         dev = driver.device(ordinal)
         attributes = _attrs.query_all(driver, dev)
         peaks = _peaks.derive(attributes)
+        nvml_extras = _extras.gather(ordinal)
         devices.append(
             {
                 "ordinal": ordinal,
                 "name": dev.name,
                 "total_memory_bytes": dev.total_mem_bytes,
                 "derived": peaks.as_dict(),
+                "nvml": nvml_extras.as_dict() if nvml_extras else None,
                 "attributes": attributes,
             }
         )
     return {"driver_version": f"{major}.{minor}", "devices": devices}
+
+
+def _print_nvml_extras(nvml: dict) -> None:
+    """Print the NVML-sourced facts, skipping fields the card didn't report."""
+    arch = nvml.get("architecture")
+    cores = nvml.get("num_gpu_cores")
+    if arch or cores:
+        bits = []
+        if arch:
+            bits.append(arch)
+        if cores:
+            bits.append(f"{cores} CUDA cores")
+        print("  architecture (nvml)       : " + ", ".join(bits))
+    gen, gen_max = nvml.get("pcie_gen_current"), nvml.get("pcie_gen_max")
+    w, w_max = nvml.get("pcie_width_current"), nvml.get("pcie_width_max")
+    if gen and w:
+        print(f"  pcie link (nvml)          : gen{gen}/{gen_max} x{w}/{w_max}")
+    total, used = nvml.get("memory_total_bytes"), nvml.get("memory_used_bytes")
+    if total:
+        print(
+            f"  memory in use (nvml)      : {used / 2**20:.0f} / "
+            f"{total / 2**20:.0f} MiB"
+        )
+    if nvml.get("ecc_enabled") is not None:
+        print(f"  ecc (nvml)                : {'on' if nvml['ecc_enabled'] else 'off'}")
+    if nvml.get("vbios_version"):
+        print(f"  vbios (nvml)              : {nvml['vbios_version']}")
 
 
 def cmd_info(args: argparse.Namespace) -> int:
@@ -111,6 +142,8 @@ def cmd_info(args: argparse.Namespace) -> int:
                 "  theoretical tf32 tensor   : "
                 + _fmt(derived["theoretical_tf32_tensor_tflops"], " TFLOP/s (dense)", nd=2)
             )
+        if dev.get("nvml"):
+            _print_nvml_extras(dev["nvml"])
         _print_live_telemetry(dev["ordinal"])
         print(f"\n  {'attribute':<48} value")
         print(f"  {'-' * 48} {'-' * 12}")
