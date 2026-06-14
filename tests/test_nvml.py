@@ -51,7 +51,7 @@ class FakeNvmlLib:
         return NVML_SUCCESS
 
     def nvmlDeviceGetBrand(self, handle, ptr):
-        ptr._obj.value = 2  # Tesla
+        ptr._obj.value = 14  # NVML_BRAND_NVIDIA, what modern T4 drivers report
         return NVML_SUCCESS
 
     def nvmlDeviceGetNumGpuCores(self, handle, ptr):
@@ -119,7 +119,7 @@ def test_static_device_facts():
     n = nvml.Nvml(lib=FakeNvmlLib())
     h = n.device(0)
     assert nvml.ARCH_NAMES[n.architecture(h)] == "Turing"
-    assert nvml.BRAND_NAMES[n.brand(h)] == "Tesla"
+    assert nvml.BRAND_NAMES[n.brand(h)] == "NVIDIA"  # value 14, the modern range
     assert n.num_gpu_cores(h) == 2560
     total, free, used = n.memory_info(h)
     assert total == 15843721216

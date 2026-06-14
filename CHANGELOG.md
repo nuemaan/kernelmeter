@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2 - 2026-06-14
+
+- nvml brand map now covers the 12-16 range (Quadro RTX, NVIDIA RTX,
+  NVIDIA, GeForce RTX, Titan RTX). Modern data-center cards report
+  NVML_BRAND_NVIDIA (14), so a current Tesla/A/H-series card used to come
+  back with an empty brand; it now resolves (verified "NVIDIA" on a T4).
+
 ## 0.4.1 - 2026-06-14
 
 - named device attributes 149-154 (d3d12_cig_streams_supported,

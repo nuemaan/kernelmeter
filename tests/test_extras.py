@@ -10,7 +10,7 @@ def _fake_nvml():
 def test_from_nvml_builds_extras():
     ex = extras.from_nvml(_fake_nvml(), 0)
     assert ex.architecture == "Turing"
-    assert ex.brand == "Tesla"
+    assert ex.brand == "NVIDIA"
     assert ex.num_gpu_cores == 2560
     assert ex.memory_total_bytes == 15843721216
     assert ex.pcie_gen_current == 3

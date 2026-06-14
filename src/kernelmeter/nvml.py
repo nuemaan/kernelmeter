@@ -35,7 +35,9 @@ ARCH_NAMES = {
     10: "Blackwell",
 }
 
-# nvmlBrandType_t (common entries)
+# nvmlBrandType_t. Modern data-center cards report NVML_BRAND_NVIDIA (14)
+# rather than the older TESLA (2), so the 12-16 entries matter on recent
+# drivers -- without them a current Tesla/A/H-series card comes back blank.
 BRAND_NAMES = {
     0: "Unknown",
     1: "Quadro",
@@ -49,6 +51,11 @@ BRAND_NAMES = {
     9: "NVIDIA vCS",
     10: "NVIDIA vWS",
     11: "NVIDIA Cloud Gaming",
+    12: "Quadro RTX",
+    13: "NVIDIA RTX",
+    14: "NVIDIA",
+    15: "GeForce RTX",
+    16: "Titan RTX",
 }
 
 
