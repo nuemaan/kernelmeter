@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0 - 2026-06-14
+
+- built-in database of 20 well-known GPUs (T4 through RTX 5090, A100/H100
+  and the workstation cards). Entries store physical parameters and derive
+  their peaks through the same formulas used for live devices; the test
+  suite asserts every derived number against the vendor spec sheet.
+- `gpus` lists the database, `compare` puts cards side by side with an
+  overlaid multi-card roofline, and `--ai` scores them at your kernel's
+  intensity. `--cost 4090=0.35,...` adds an attainable-TFLOPs-per-dollar
+  column for rental decisions.
+- `roofline --gpu 4090` draws any database card without owning it.
+- `report` writes a single-file HTML report card (SVG roofline, peak
+  tiles, NVML facts, launch limits) for the local device or any database
+  card. No javascript, no external assets.
+
 ## 0.4.2 - 2026-06-14
 
 - nvml brand map now covers the 12-16 range (Quadro RTX, NVIDIA RTX,

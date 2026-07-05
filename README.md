@@ -27,6 +27,12 @@ required dependencies.
 * `kernelmeter ceiling` measures what the card *really* delivers
   (STREAM-style bandwidth tests plus a big FP32 matmul), because spec
   sheet numbers are never fully reachable.
+* `kernelmeter compare 4090 h100-sxm --ai 0.33` tells you which card is
+  actually faster *for your kernel*, and per rental dollar. Works with
+  no GPU at all: there is a built-in database of 20 cards whose specs
+  are unit-tested against the vendor sheets.
+* `kernelmeter report` writes a single-file HTML report card for your
+  GPU that you can share, attach to an issue, or keep as a record.
 
 ## Install
 
@@ -42,6 +48,38 @@ git clone https://github.com/nuemaan/kernelmeter
 cd kernelmeter
 pip install -e ".[bench]"
 ```
+
+## No GPU handy? Start here
+
+Deciding what to rent is a roofline question, and you can answer it from
+any laptop. Say your kernel does 0.33 flop per byte (a fused elementwise
+op) and you're choosing between renting cards:
+
+```bash
+kernelmeter compare 4090 a100-80gb h100-sxm --ai 0.33 --cost 4090=0.35,a100-80gb=1.19,h100-sxm=2.69
+```
+
+```text
+card            bw GB/s  fp32 TF  fp16 TC  ridge  @0.33 TF  vs rtx-4090   $/hr  TF per $
+----------------------------------------------------------------------------------------
+rtx-4090           1008     82.6      330   81.9      0.33        1.00x   0.35      0.95
+a100-80gb          2039     19.5      312    9.6      0.67        2.02x   1.19      0.57
+h100-sxm           3347     66.9     1071   20.0      1.10        3.32x   2.69      0.41
+
+at this intensity every card is memory-bound: bandwidth is what you're buying
+```
+
+Read the last two columns: the H100 is 3.3x faster in absolute terms, but
+for this kernel the 4090 delivers more than twice the throughput per
+rental dollar. The overlaid rooflines print below the table so you can
+see *why*: left of every ridge point, only the bandwidth line matters.
+
+`kernelmeter gpus` lists the built-in database (T4 through RTX 5090,
+A100/H100 and the workstation cards). Every entry stores physical
+parameters and derives its peaks through the same formulas used for live
+devices, and the test suite asserts each derived number against the
+vendor spec sheet, so a wrong entry fails CI. `kernelmeter roofline
+--gpu 4090` draws any card's roofline the same way.
 
 ## Querying your GPU
 
@@ -288,6 +326,18 @@ kernelmeter bench mykernels.py --compare baseline.json
 
 The compare run prints a delta column per kernel and exits non-zero if
 anything got more than 5% slower, so it slots straight into CI.
+
+## A report you can share
+
+```bash
+kernelmeter report                 # from the local device
+kernelmeter report --gpu 4090      # from the card database
+```
+
+Writes a single self-contained HTML file: the card's peak numbers as
+tiles, an SVG roofline, the NVML facts and the launch limits. No
+javascript, no external assets, dark theme. Attach it to a bug report,
+drop it in your team wiki, or keep one per machine in your cluster docs.
 
 ## A workflow that works
 
