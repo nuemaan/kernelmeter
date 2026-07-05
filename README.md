@@ -17,8 +17,8 @@ Or skip the terminal entirely: **[nuemaan.github.io/kernelmeter](https://nuemaan
 runs the comparison in your browser, and the settings live in the URL so
 you can send someone the exact tradeoff you mean.
 
-Small tools for one question: **is my GPU kernel actually good, and if
-not, what exactly is holding it back?** All in one package with zero
+Small tools for two questions: **is my GPU kernel actually good, and
+which GPU is actually worth paying for?** All in one package with zero
 required dependencies.
 
 * `kernelmeter info` prints every device attribute your GPU driver knows,
@@ -122,7 +122,7 @@ Device 0: Tesla T4 (14.6 GiB)
   max_shared_memory_per_block                      49152
   warp_size                                        32
   clock_rate_khz                                   1590000
-  ...                                              (148 attributes total)
+  ...                                              (147 attributes total)
 ```
 
 The `attribute` table is read straight from the driver via
@@ -200,8 +200,8 @@ it gets judged against the right ceiling (`kernelmeter info` prints the
 derived fp16/tf32 tensor peaks for your card). Raw `%peak bw` and
 `%fp32` numbers are always in the `--json` output.
 
-When NVML is available (it ships with the driver) a second table follows
-with what the card was doing during each measurement:
+When NVML is available, a second table follows with what the card was
+doing during each measurement:
 
 ```text
 telemetry                    sm MHz   mem MHz   temp   power  %roof@clk
@@ -244,8 +244,9 @@ kernelmeter roofline --ai 0.33        # mark a kernel at 0.33 flop/byte
 ```
 
 ```text
-  peak bandwidth : 320.0 GB/s
-  peak compute   : 8.14 TFLOP/s
+Device 0: Tesla T4
+  peak bandwidth : 320.1 GB/s
+  peak compute   : 8.14 TFLOP/s (fp32)
   ridge point    : 25.4 flop/byte
 
 8.14 TF/s |                                      **x*****************
@@ -261,7 +262,7 @@ kernelmeter roofline --ai 0.33        # mark a kernel at 0.33 flop/byte
           |  ****
           |**
           +----------------------------------------------------------
-           2^-3            2^0            2^3             2^6
+           2^-3            2^0            2^3             2^6          flop/byte
 
 at 0.33 flop/byte the kernel is memory-bound; attainable: 0.11 TFLOP/s
 ```
@@ -323,8 +324,8 @@ measured bandwidth ceiling: 238.6 GB/s (use this as the honest 100%
 for memory-bound kernels)
 ```
 
-This reframes the bench results above: the vector add that scored "75.3%
-of theoretical" was moving 241 GB/s on a card whose memory system tops
+This reframes the bench results above: the vector add that scored "76.9%
+of theoretical" was moving 246 GB/s on a card whose memory system tops
 out at 238.6 GB/s in practice. It was already saturated. Without the
 measured ceiling you would have kept optimizing a finished kernel.
 
@@ -379,9 +380,10 @@ whether your kernels are any good:
 * The occupancy command implements the standard calculator model. Real
   occupancy can differ (launch bounds, driver decisions); confirm with
   Nsight Compute when it matters.
-* Attribute names above id 143 are best-effort against the CUDA 12.x
-  headers. Values are always read live from your driver. PRs that extend
-  the name table are welcome.
+* The attribute name table tracks the CUDA 13.x driver enum. Values are
+  always read live from your driver, and ids newer than the table show up
+  as `attribute_<id>` rather than being dropped. PRs that extend the
+  table when new toolkits land are welcome.
 
 ## Development
 
