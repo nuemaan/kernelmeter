@@ -13,6 +13,10 @@ Try that right now, no install and no GPU required:
 uvx kernelmeter compare 4090 a100-80gb h100-sxm --ai 0.33
 ```
 
+Or skip the terminal entirely: **[nuemaan.github.io/kernelmeter](https://nuemaan.github.io/kernelmeter/)**
+runs the comparison in your browser, and the settings live in the URL so
+you can send someone the exact tradeoff you mean.
+
 Small tools for one question: **is my GPU kernel actually good, and if
 not, what exactly is holding it back?** All in one package with zero
 required dependencies.
