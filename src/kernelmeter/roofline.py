@@ -87,3 +87,69 @@ def render(
                 axis[col + i] = ch
     lines.append(" " * pad + " " + "".join(axis) + " flop/byte")
     return lines
+
+
+MULTI_SYMBOLS = "*o+x#"
+
+
+def render_multi(
+    roofs: list[tuple[str, float, float]],
+    ai: float | None = None,
+    width: int = 58,
+    height: int = 14,
+) -> list[str]:
+    """Overlay up to five rooflines: (label, peak_tflops, peak_bw_gbs)
+    each drawn with its own symbol, shared log-log axes, legend below.
+    A vertical '|' marks the ai position when given."""
+    if not roofs or len(roofs) > len(MULTI_SYMBOLS):
+        raise ValueError(f"render_multi takes 1..{len(MULTI_SYMBOLS)} roofs")
+
+    lo, hi = -3.0, 8.0
+
+    def col_to_ai(c: int) -> float:
+        return 2.0 ** (lo + (hi - lo) * c / (width - 1))
+
+    def ai_to_col(a: float) -> int:
+        c = round((math.log2(a) - lo) / (hi - lo) * (width - 1))
+        return min(max(c, 0), width - 1)
+
+    all_ys = []
+    per_roof = []
+    for _, tf, bw in roofs:
+        ys = [attainable_tflops(col_to_ai(c), tf, bw) for c in range(width)]
+        per_roof.append(ys)
+        all_ys.extend(ys)
+    ymin, ymax = math.log10(min(all_ys)), math.log10(max(all_ys))
+
+    def y_to_row(y: float) -> int:
+        if ymax == ymin:
+            return height - 1
+        frac = (math.log10(y) - ymin) / (ymax - ymin)
+        return min(max(round(frac * (height - 1)), 0), height - 1)
+
+    grid = [[" "] * width for _ in range(height)]
+    if ai is not None:
+        col = ai_to_col(min(max(ai, 2.0**lo), 2.0**hi))
+        for r in range(height):
+            grid[r][col] = "|"
+    for ys, symbol in zip(per_roof, MULTI_SYMBOLS):
+        for c, y in enumerate(ys):
+            grid[height - 1 - y_to_row(y)][c] = symbol
+
+    top_label = f"{max(tf for _, tf, _ in roofs):.1f} TF/s "
+    pad = len(top_label)
+    lines = []
+    for r, row in enumerate(grid):
+        label = top_label if r == 0 else " " * pad
+        lines.append(label + "|" + "".join(row))
+    lines.append(" " * pad + "+" + "-" * width)
+    ticks = {ai_to_col(2.0**e): f"2^{e}" for e in (-3, 0, 3, 6)}
+    axis = [" "] * (width + 1)
+    for col, text in ticks.items():
+        for i, ch in enumerate(text):
+            if col + i < len(axis):
+                axis[col + i] = ch
+    lines.append(" " * pad + " " + "".join(axis) + " flop/byte")
+    for (label, _, _), symbol in zip(roofs, MULTI_SYMBOLS):
+        lines.append(" " * pad + f"  {symbol} {label}")
+    return lines
