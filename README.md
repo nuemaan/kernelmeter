@@ -5,6 +5,14 @@
 [![Python](https://img.shields.io/pypi/pyversions/kernelmeter)](https://pypi.org/project/kernelmeter/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+![which gpu is worth renting, computed from rooflines](docs/demo.svg)
+
+Try that right now, no install and no GPU required:
+
+```bash
+uvx kernelmeter compare 4090 a100-80gb h100-sxm --ai 0.33
+```
+
 Small tools for one question: **is my GPU kernel actually good, and if
 not, what exactly is holding it back?** All in one package with zero
 required dependencies.

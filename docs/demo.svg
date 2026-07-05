@@ -1,0 +1,21 @@
+<svg viewBox="0 0 760 348" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">
+  <rect width="760" height="348" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <circle cx="26" cy="24" r="6" fill="#ff5f57"/>
+  <circle cx="46" cy="24" r="6" fill="#febc2e"/>
+  <circle cx="66" cy="24" r="6" fill="#28c840"/>
+  <text x="380" y="28" fill="#8b949e" font-size="12" text-anchor="middle">kernelmeter</text>
+
+  <text x="24" y="66" xml:space="preserve"><tspan fill="#7ee787">$</tspan><tspan fill="#e6edf3"> kernelmeter compare 4090 a100-80gb h100-sxm --ai 0.33 \</tspan></text>
+  <text x="24" y="88" xml:space="preserve" fill="#e6edf3">      --cost 4090=0.35,a100-80gb=1.19,h100-sxm=2.69</text>
+
+  <text x="24" y="132" xml:space="preserve" fill="#8b949e">card         bw GB/s  fp32 TF  fp16 TC  ridge  @0.33 TF  vs 4090   $/hr  TF per $</text>
+  <text x="24" y="154" xml:space="preserve" fill="#30363d">----------------------------------------------------------------------------------</text>
+  <text x="24" y="176" xml:space="preserve"><tspan fill="#e6edf3">rtx-4090        1008     82.6      330   81.9      0.33     1.00x   0.35      </tspan><tspan fill="#7ee787" font-weight="bold">0.95</tspan></text>
+  <text x="24" y="198" xml:space="preserve"><tspan fill="#e6edf3">a100-80gb       2039     19.5      312    9.6      0.67     2.02x   1.19      </tspan><tspan fill="#e6edf3">0.57</tspan></text>
+  <text x="24" y="220" xml:space="preserve"><tspan fill="#e6edf3">h100-sxm        3347     66.9     1071   20.0      1.10     3.32x   2.69      </tspan><tspan fill="#e6edf3">0.41</tspan></text>
+
+  <text x="24" y="262" xml:space="preserve" fill="#d29922">at this intensity every card is memory-bound: bandwidth is what you're buying</text>
+
+  <text x="24" y="304" xml:space="preserve"><tspan fill="#8b949e">the h100 is 3.3x faster. the 4090 is 2.3x more compute per dollar.</tspan></text>
+  <text x="24" y="326" xml:space="preserve"><tspan fill="#8b949e">no gpu needed to run this: </tspan><tspan fill="#58a6ff">uvx kernelmeter compare ...</tspan></text>
+</svg>
