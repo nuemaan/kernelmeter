@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1 - 2026-07-07
+
+- fixed two crashes found in an edge-case audit: occupancy with an
+  out-of-range block size and llm with --num-gpus 0 both crashed with
+  tracebacks instead of printing clean errors. both exit 1 with a message
+  now, and llm.estimate() validates its inputs.
+- local titan cards are reported by the driver in caps ("NVIDIA TITAN
+  RTX"), which dodged the consumer-card check, so their prefill ceiling
+  wasn't halved. detection is case-insensitive now.
+- report prints a clean error when the output path isn't writable.
+- llm added to the cli help header.
+
 ## 0.7.0 - 2026-07-07
 
 - llm: geforce/titan prefill ceilings now use the fp32-accumulate tensor

@@ -131,6 +131,30 @@ def test_cli_llm_bad_quant(capsys):
     assert "unknown quant" in capsys.readouterr().err
 
 
+def test_cli_llm_rejects_zero_gpus_and_batch(capsys):
+    assert cli.main(["llm", "70b", "--gpus", "4090", "--num-gpus", "0"]) == 1
+    assert "at least 1" in capsys.readouterr().err
+    assert cli.main(["llm", "70b", "--gpus", "4090", "--batch", "0"]) == 1
+    assert "at least 1" in capsys.readouterr().err
+
+
+def test_estimate_rejects_zero_gpus():
+    with pytest.raises(ValueError, match="at least 1"):
+        llm.estimate("x", 1000.0, 100.0, None, 8e9, 0.58, num_gpus=0)
+
+
+def test_uppercase_titan_counts_as_consumer(monkeypatch, capsys):
+    # the driver reports "NVIDIA TITAN RTX" in caps; halving must still apply
+    from kernelmeter.cudadrv import Driver
+    from conftest import FakeLibCuda
+
+    lib = FakeLibCuda(name=b"NVIDIA TITAN RTX")
+    monkeypatch.setattr(cli, "Driver", lambda: Driver(lib=lib))
+    assert cli.main(["llm", "8b"]) == 0
+    out = capsys.readouterr().out
+    assert "fp32-accumulate" in out
+
+
 def test_cli_llm_geforce_prefill_is_halved(capsys):
     assert cli.main(["llm", "8b", "--gpus", "4090"]) == 0
     out = capsys.readouterr().out

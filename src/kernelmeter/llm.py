@@ -82,6 +82,8 @@ def estimate(
     reads and FLOPs use the active count. num_gpus splits the weights and
     aggregates bandwidth/compute, assuming an ideal tensor-parallel split.
     """
+    if num_gpus < 1 or batch < 1:
+        raise ValueError("num_gpus and batch must be at least 1")
     weights_total = weight_bytes(params, bytes_per_param)
     active = active_params if active_params is not None else params
     read_bytes = weight_bytes(active, bytes_per_param)

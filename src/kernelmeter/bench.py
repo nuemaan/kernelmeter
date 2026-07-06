@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 from . import attrs as _attrs
 from . import peaks as _peaks

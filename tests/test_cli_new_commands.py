@@ -75,3 +75,13 @@ def test_occupancy_from_device(patched_driver, monkeypatch, capsys):
 def test_occupancy_bad_cc(capsys):
     assert cli.main(["occupancy", "--block", "256", "--cc", "3.5"]) == 1
     assert "error" in capsys.readouterr().err
+
+
+def test_occupancy_bad_block_is_a_clean_error(capsys):
+    assert cli.main(["occupancy", "--block", "2048", "--cc", "8.6"]) == 1
+    assert "block size must be" in capsys.readouterr().err
+
+
+def test_occupancy_unknown_cc_notes_fallback(capsys):
+    assert cli.main(["occupancy", "--block", "256", "--cc", "10.0"]) == 0
+    assert "borrowed from 9.0" in capsys.readouterr().out

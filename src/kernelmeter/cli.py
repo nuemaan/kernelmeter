@@ -7,6 +7,7 @@
   kernelmeter ceiling               measure real achievable bandwidth and FP32
   kernelmeter gpus                  list the built-in card database
   kernelmeter compare 4090 h100-sxm compare cards at your kernel's intensity
+  kernelmeter llm 70b --gpus 4090   token/s ceilings for llm inference
   kernelmeter report                write a shareable single-file html report
 """
 
@@ -341,7 +342,11 @@ def cmd_occupancy(args: argparse.Namespace) -> int:
             )
             return 1
 
-    occ = _occupancy.compute(args.block, args.regs, args.smem, limits)
+    try:
+        occ = _occupancy.compute(args.block, args.regs, args.smem, limits)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     print(f"occupancy for {source}")
     print(f"  block={args.block} regs/thread={args.regs} smem/block={args.smem}\n")
     print(f"  occupancy    : {occ.pct:.1f}% ({occ.active_warps}/{occ.max_warps} warps per SM)")
@@ -480,6 +485,10 @@ def cmd_llm(args: argparse.Namespace) -> int:
         bpp = _llm.QUANTS[args.quant]
         quant_label = f"{args.quant} (~{bpp} bytes/param)"
 
+    if args.num_gpus < 1 or args.batch < 1:
+        print("error: --num-gpus and --batch must be at least 1", file=sys.stderr)
+        return 1
+
     n = args.num_gpus
     # (display name, bandwidth, compute peak, vram bytes, vram display,
     #  $/hr per card, tdp watts, consumer?)
@@ -515,7 +524,7 @@ def cmd_llm(args: argparse.Namespace) -> int:
             )
             return 1
         compute = p.fp16_tensor_tflops or p.fp32_tflops
-        consumer = dev.name.startswith(("GeForce", "NVIDIA GeForce", "Titan"))
+        consumer = any(m in dev.name.lower() for m in ("geforce", "titan"))
         if consumer and p.fp16_tensor_tflops:
             compute /= 2
         tdp = None
@@ -639,8 +648,12 @@ def cmd_report(args: argparse.Namespace) -> int:
             subtitle=f"CUDA driver {info['driver_version']}",
         )
 
-    with open(args.out, "w") as fh:
-        fh.write(page)
+    try:
+        with open(args.out, "w") as fh:
+            fh.write(page)
+    except OSError as exc:
+        print(f"error: can't write {args.out}: {exc}", file=sys.stderr)
+        return 1
     print(f"wrote {args.out}")
     return 0
 
