@@ -33,6 +33,17 @@ def _peaks(gpu_id):
         ("rtx-4090", 1008, 82.6),
         ("rtx-5080", 960, 56.3),
         ("rtx-5090", 1792, 104.8),
+        ("v100-pcie", 900, 14.1),
+        ("a30", 933, 10.3),
+        ("l40", 864, 90.5),
+        ("rtx-a4000", 448, 19.2),
+        ("rtx-a5000", 768, 27.8),
+        ("titan-rtx", 672, 16.3),
+        ("rtx-2080-ti", 616, 13.45),
+        ("rtx-3080-ti", 912, 34.1),
+        ("rtx-3090-ti", 1008, 40.0),
+        ("rtx-5070", 672, 30.9),
+        ("rtx-5070-ti", 896, 43.9),
     ],
 )
 def test_derived_peaks_match_spec_sheets(gpu_id, bw, fp32):
@@ -56,11 +67,22 @@ def test_resolve_exact_and_fuzzy():
     assert gpus.resolve("l40s").id == "l40s"
 
 
+def test_resolve_prefers_exact_over_ti_variants():
+    # bare numbers keep resolving to the base card, not the ti
+    assert gpus.resolve("3090").id == "rtx-3090"
+    assert gpus.resolve("3080").id == "rtx-3080"
+    assert gpus.resolve("5070").id == "rtx-5070"
+    assert gpus.resolve("3090-ti").id == "rtx-3090-ti"
+    assert gpus.resolve("a5000").id == "rtx-a5000"
+
+
 def test_resolve_ambiguous_lists_candidates():
     with pytest.raises(gpus.UnknownGpuError, match="ambiguous"):
         gpus.resolve("a100")
     with pytest.raises(gpus.UnknownGpuError, match="h100-sxm"):
         gpus.resolve("h100")
+    with pytest.raises(gpus.UnknownGpuError, match="ambiguous"):
+        gpus.resolve("v100")
 
 
 def test_resolve_unknown():

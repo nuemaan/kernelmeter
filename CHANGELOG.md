@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1 - 2026-07-06
+
+- 11 more cards in the database (v100-pcie, a30, l40, rtx a4000/a5000,
+  titan rtx, 2080 ti, 3080 ti, 3090 ti, 5070, 5070 ti), each spec-sheet
+  asserted in tests like the rest. 31 cards total.
+- resolve() prefers the exact card over ti variants, so "3090" still
+  means rtx-3090 now that rtx-3090-ti exists.
+- scripts/update_webdb.py re-embeds the database into the web demo;
+  the drift test tells you when you forgot.
+
 ## 0.5.0 - 2026-06-14
 
 - built-in database of 20 well-known GPUs (T4 through RTX 5090, A100/H100

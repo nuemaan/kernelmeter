@@ -41,7 +41,7 @@ required dependencies.
   sheet numbers are never fully reachable.
 * `kernelmeter compare 4090 h100-sxm --ai 0.33` tells you which card is
   actually faster *for your kernel*, and per rental dollar. Works with
-  no GPU at all: there is a built-in database of 20 cards whose specs
+  no GPU at all: there is a built-in database of 31 cards whose specs
   are unit-tested against the vendor sheets.
 * `kernelmeter report` writes a single-file HTML report card for your
   GPU that you can share, attach to an issue, or keep as a record.
