@@ -43,6 +43,9 @@ required dependencies.
   actually faster *for your kernel*, and per rental dollar. Works with
   no GPU at all: there is a built-in database of 31 cards whose specs
   are unit-tested against the vendor sheets.
+* `kernelmeter llm 70b --quant q4 --gpus 4090 a100-80gb` answers the
+  question everyone actually has: does it fit, and what is the hard
+  ceiling on tokens per second. Same roofline math, zero benchmarks.
 * `kernelmeter report` writes a single-file HTML report card for your
   GPU that you can share, attach to an issue, or keep as a record.
 
@@ -92,6 +95,40 @@ parameters and derives its peaks through the same formulas used for live
 devices, and the test suite asserts each derived number against the
 vendor spec sheet, so a wrong entry fails CI. `kernelmeter roofline
 --gpu 4090` draws any card's roofline the same way.
+
+## Will it run a 70B, and how fast at best?
+
+LLM decode is the memory-bound case of the same roofline: generating one
+token reads every weight once, so the hard ceiling is bandwidth divided
+by weight bytes. Prefill is the compute-bound case, about 2 FLOPs per
+parameter per token. That means honest upper bounds need no benchmark at
+all:
+
+```bash
+kernelmeter llm 70b --quant q4 --gpus 4090 a100-80gb h100-sxm --cost a100-80gb=1.19,h100-sxm=2.69
+```
+
+```text
+70b model at q4 (~0.58 bytes/param): 40.6 GB of weights
+
+card                       vram  fits  decode t/s  prefill t/s   $/hr  t/s per $
+--------------------------------------------------------------------------------
+rtx-4090                   24GB    no           -            -      -          -
+a100-80gb                  80GB   yes          50         2228   1.19       42.2
+h100-sxm                   80GB   yes          82         7647   2.69       30.6
+
+these are roofline ceilings (decode reads every weight once per token), not
+predictions: well-tuned stacks land at 50-85% of them, none land above. kv cache
+and activations need room on top of the weights (2 GB assumed here).
+```
+
+The honesty note is the point. If someone quotes you 120 tok/s for a 70B
+q4 on one A100, the ceiling says that's physically impossible; if your
+own stack gets 20, the ceiling says you're leaving half on the table.
+Quant sizes use effective bytes per parameter (gguf k-quants carry
+scales, so q4 is ~0.58, not 0.5); pass `--bytes-per-param` for an exact
+figure. With no `--gpus` it estimates for the GPU in your machine, using
+its real memory size for the fit check.
 
 ## Querying your GPU
 

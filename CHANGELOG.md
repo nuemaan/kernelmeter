@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 - 2026-07-06
+
+- new `llm` command: token-throughput ceilings for llm inference from the
+  same roofline math. decode is memory-bound (every token reads all the
+  weights), prefill is compute-bound (~2 flops per param per token), so
+  the ceilings need no benchmark. checks vram fit, takes --quant presets
+  with gguf-realistic bytes per parameter or an exact --bytes-per-param,
+  and --cost adds tokens-per-second per rental dollar. works against the
+  card database or the local device.
+- the database now carries vram capacity for every card (spec-sheet
+  tested like the rest); `gpus` grew a vram column.
+
 ## 0.5.1 - 2026-07-06
 
 - 11 more cards in the database (v100-pcie, a30, l40, rtx a4000/a5000,

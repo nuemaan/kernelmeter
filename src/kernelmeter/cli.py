@@ -359,12 +359,18 @@ def cmd_gpus(args: argparse.Namespace) -> int:
     if args.json:
         out = []
         for spec in _gpus.DATABASE:
-            entry = {"id": spec.id, "name": spec.name, "tdp_w": spec.tdp_w}
+            entry = {
+                "id": spec.id, "name": spec.name,
+                "tdp_w": spec.tdp_w, "vram_gb": spec.vram_gb,
+            }
             entry.update(spec.peaks().as_dict())
             out.append(entry)
         print(json.dumps(out, indent=2))
         return 0
-    header = f"{'id':<14} {'name':<20} {'cc':>5} {'SMs':>5} {'bw GB/s':>8} {'fp32 TF':>8} {'fp16 TC':>8} {'tdp':>5}"
+    header = (
+        f"{'id':<14} {'name':<20} {'cc':>5} {'SMs':>5} {'vram':>5} "
+        f"{'bw GB/s':>8} {'fp32 TF':>8} {'fp16 TC':>8} {'tdp':>5}"
+    )
     print(header)
     print("-" * len(header))
     for spec in _gpus.DATABASE:
@@ -372,7 +378,7 @@ def cmd_gpus(args: argparse.Namespace) -> int:
         fp16 = f"{p.fp16_tensor_tflops:.0f}" if p.fp16_tensor_tflops else "-"
         print(
             f"{spec.id:<14} {spec.name:<20} {spec.cc[0]}.{spec.cc[1]:>2} "
-            f"{spec.sm_count:>5} {p.mem_bandwidth_gbs:>8.0f} "
+            f"{spec.sm_count:>5} {spec.vram_gb:>3}GB {p.mem_bandwidth_gbs:>8.0f} "
             f"{p.fp32_tflops:>8.1f} {fp16:>8} {spec.tdp_w:>4}W"
         )
     return 0
@@ -442,6 +448,101 @@ def cmd_compare(args: argparse.Namespace) -> int:
         roofs = [(spec.id, tf, p.mem_bandwidth_gbs) for spec, p, tf, _ in rows]
         for line in _roofline.render_multi(roofs, ai=ai):
             print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# llm
+# ---------------------------------------------------------------------------
+
+def cmd_llm(args: argparse.Namespace) -> int:
+    from . import llm as _llm
+
+    try:
+        params = _llm.parse_params(args.params)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if args.bytes_per_param:
+        bpp, quant_label = args.bytes_per_param, f"{args.bytes_per_param} bytes/param"
+    else:
+        if args.quant not in _llm.QUANTS:
+            print(
+                f"error: unknown quant {args.quant!r} "
+                f"(choices: {', '.join(_llm.QUANTS)})",
+                file=sys.stderr,
+            )
+            return 1
+        bpp = _llm.QUANTS[args.quant]
+        quant_label = f"{args.quant} (~{bpp} bytes/param)"
+
+    # (display name, bandwidth, compute peak, vram bytes, vram display)
+    cards = []
+    if args.gpus:
+        try:
+            queries = [q for chunk in args.gpus for q in chunk.split(",") if q]
+            specs = [_gpus.resolve(q) for q in queries]
+            costs = _parse_costs(args.cost) if args.cost else {}
+        except (_gpus.UnknownGpuError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        for spec in specs:
+            p = spec.peaks()
+            compute = p.fp16_tensor_tflops or p.fp32_tflops
+            cards.append(
+                (spec.id, p.mem_bandwidth_gbs, compute,
+                 spec.vram_gb * 1024**3, f"{spec.vram_gb}GB", costs.get(spec.id))
+            )
+    else:
+        try:
+            driver = Driver()
+            dev = driver.device(args.device)
+            p = _peaks.derive(_attrs.query_all(driver, dev))
+        except CudaNotAvailableError:
+            print(
+                "error: no CUDA device found. Pass --gpus (e.g. --gpus 4090 "
+                "a100-80gb) to estimate for cards from the database.",
+                file=sys.stderr,
+            )
+            return 1
+        compute = p.fp16_tensor_tflops or p.fp32_tflops
+        cards.append(
+            (dev.name, p.mem_bandwidth_gbs, compute,
+             dev.total_mem_bytes, f"{dev.total_mem_bytes / 2**30:.0f}GB", None)
+        )
+
+    weights_gb = _llm.weight_bytes(params, bpp) / 1e9
+    print(f"{args.params} model at {quant_label}: {weights_gb:.1f} GB of weights\n")
+
+    any_cost = any(c[5] for c in cards)
+    header = f"{'card':<24} {'vram':>6} {'fits':>5} {'decode t/s':>11} {'prefill t/s':>12}"
+    if any_cost:
+        header += f" {'$/hr':>6} {'t/s per $':>10}"
+    print(header)
+    print("-" * len(header))
+    results = []
+    for name, bw, compute, vram_bytes, vram_label, cost in cards:
+        est = _llm.estimate(
+            name, bw, compute, vram_bytes, params, bpp, overhead_gb=args.overhead_gb
+        )
+        results.append(est)
+        fits = "-" if est.fits is None else ("yes" if est.fits else "no")
+        decode = f"{est.decode_tps:.0f}" if est.decode_tps else "-"
+        prefill = f"{est.prefill_tps:.0f}" if est.prefill_tps else "-"
+        line = f"{name:<24} {vram_label:>6} {fits:>5} {decode:>11} {prefill:>12}"
+        if any_cost:
+            if cost and est.decode_tps:
+                line += f" {cost:>6.2f} {est.decode_tps / cost:>10.1f}"
+            else:
+                line += f" {'-':>6} {'-':>10}"
+        print(line)
+
+    print(
+        "\nthese are roofline ceilings (decode reads every weight once per "
+        "token), not\npredictions: well-tuned stacks land at 50-85% of them, "
+        "none land above. kv cache\nand activations need room on top of the "
+        f"weights ({args.overhead_gb:g} GB assumed here)."
+    )
     return 0
 
 
@@ -551,6 +652,22 @@ def main(argv: list[str] | None = None) -> int:
         "--cost", help="rental prices for a TF-per-dollar column, e.g. 4090=0.44,h100-sxm=2.99"
     )
     p_cmp.set_defaults(func=cmd_compare)
+
+    p_llm = sub.add_parser("llm", help="token/s ceilings for llm inference on given cards")
+    p_llm.add_argument("params", help="model size, e.g. 70b, 8b, 900m")
+    p_llm.add_argument("--quant", default="q4", help="f16, bf16, q8, q6, q5, q4, q3 (default q4)")
+    p_llm.add_argument(
+        "--bytes-per-param", type=float,
+        help="exact bytes per parameter, overrides --quant",
+    )
+    p_llm.add_argument(
+        "--gpus", nargs="+",
+        help="cards from the database (default: the local device)",
+    )
+    p_llm.add_argument("--cost", help="rental prices, e.g. 4090=0.35,h100-sxm=2.69")
+    p_llm.add_argument("--overhead-gb", type=float, default=2.0)
+    p_llm.add_argument("--device", type=int, default=0)
+    p_llm.set_defaults(func=cmd_llm)
 
     p_rep = sub.add_parser("report", help="write a shareable single-file html report")
     p_rep.add_argument("--out", default="kernelmeter-report.html", help="output path")
