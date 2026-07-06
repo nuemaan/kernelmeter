@@ -2,28 +2,38 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>kernelmeter - which gpu is worth renting?</title>
-<meta name="description" content="Compare GPUs at your kernel's arithmetic intensity: attainable TFLOPs and TFLOPs per rental dollar, from roofline math.">
+<meta name="description" content="Compare GPUs at your kernel's arithmetic intensity, or get token/s ceilings for LLM inference. Roofline math, spec-sheet-tested data.">
 <style>
 :root{color-scheme:dark}
 body{background:#0d1117;color:#e6edf3;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:860px;margin:1.5rem auto;padding:0 1rem}
 h1{font-size:1.5rem;margin:0} .sub{color:#8b949e;margin:.3rem 0 1.2rem}
 h2{font-size:.95rem;color:#8b949e;margin:1.4rem 0 .5rem;text-transform:lowercase}
+.tabs{display:flex;gap:.5rem;margin:1rem 0}
+.tabs button{font-size:.95rem;padding:.4rem 1rem}
+.tabs button.on{border-color:#58a6ff;color:#58a6ff}
 .chips{display:flex;flex-wrap:wrap;gap:.4rem}
 .chip{background:#161b22;border:1px solid #30363d;border-radius:999px;padding:.25rem .7rem;cursor:pointer;font-size:.85rem;user-select:none}
 .chip.on{border-color:#58a6ff;color:#58a6ff}
 .controls{display:flex;flex-wrap:wrap;gap:1.2rem;align-items:center;margin:1rem 0}
 label{color:#8b949e;font-size:.85rem}
 input[type=range]{width:220px;vertical-align:middle}
-input[type=number],input[type=text]{background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:.25rem .5rem;width:80px}
+input[type=number],input[type=text],select{background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:.25rem .5rem;width:80px}
+select{width:auto}
 .hint{color:#8b949e;font-size:.8rem}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 th,td{padding:.35rem .5rem;border-bottom:1px solid #21262d;text-align:right}
 th{color:#8b949e;font-weight:500} td:first-child,th:first-child{text-align:left}
-.best{color:#7ee787;font-weight:600}
+.best{color:#7ee787;font-weight:600} .nofit{color:#8b949e}
 svg{width:100%;height:auto;border:1px solid #30363d;border-radius:8px;margin-top:.4rem;background:#0d1117}
 .verdict{color:#d29922;margin:.6rem 0}
 .costrow{display:flex;flex-wrap:wrap;gap:.8rem;margin:.4rem 0}
 .costrow span{font-size:.85rem;color:#8b949e}
+.bars{margin-top:.6rem}
+.barrow{display:flex;align-items:center;gap:.6rem;margin:.3rem 0;font-size:.85rem}
+.barrow .lbl{width:110px;color:#8b949e;text-align:right;flex-shrink:0}
+.bartrack{flex:1;background:#161b22;border-radius:4px;height:18px;position:relative}
+.barfill{height:100%;border-radius:4px}
+.barval{margin-left:.5rem;min-width:70px}
 footer{color:#8b949e;font-size:.85rem;margin:2rem 0 1rem;border-top:1px solid #21262d;padding-top:1rem}
 a{color:#58a6ff;text-decoration:none}
 code{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:.1rem .35rem;font-size:.85em}
@@ -31,32 +41,57 @@ button{background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6ed
 </style></head>
 <body>
 <h1>which gpu is worth renting?</h1>
-<p class="sub">pick cards, set your kernel's arithmetic intensity, read the roofline.
-every number derives from physical parameters tested against vendor spec sheets.
-the terminal version does far more: <a href="https://github.com/nuemaan/kernelmeter">github.com/nuemaan/kernelmeter</a></p>
+<p class="sub">pick cards, read the roofline. every number derives from physical
+parameters tested against vendor spec sheets. the terminal version does far
+more: <a href="https://github.com/nuemaan/kernelmeter">github.com/nuemaan/kernelmeter</a></p>
+
+<div class="tabs">
+  <button id="tabKernel">kernel roofline</button>
+  <button id="tabLlm">llm inference</button>
+</div>
 
 <h2>cards</h2>
 <div class="chips" id="chips"></div>
-
-<div class="controls">
-  <label>intensity <input type="range" id="aiSlider" min="-3" max="8" step="0.05"></label>
-  <label><input type="number" id="aiBox" step="0.01" min="0.01"> flop/byte</label>
-  <label><input type="checkbox" id="tensor"> fp16 tensor roof</label>
-  <button id="share">copy link</button>
-</div>
-<p class="hint">rough guide: elementwise ops ~0.2, softmax ~1, conv ~10 to 100, big matmul ~300+</p>
-
 <div class="costrow" id="costs"></div>
 
-<h2>at your intensity</h2>
-<table id="tbl"></table>
-<p class="verdict" id="verdict"></p>
+<div id="kernelView">
+  <div class="controls">
+    <label>intensity <input type="range" id="aiSlider" min="-3" max="8" step="0.05"></label>
+    <label><input type="number" id="aiBox" step="0.01" min="0.01"> flop/byte</label>
+    <label><input type="checkbox" id="tensor"> fp16 tensor roof</label>
+    <button id="share">copy link</button>
+  </div>
+  <p class="hint">rough guide: elementwise ops ~0.2, softmax ~1, conv ~10 to 100, big matmul ~300+</p>
 
-<h2>rooflines</h2>
-<div id="chart"></div>
+  <h2>at your intensity</h2>
+  <table id="tbl"></table>
+  <p class="verdict" id="verdict"></p>
+
+  <h2>rooflines</h2>
+  <div id="chart"></div>
+</div>
+
+<div id="llmView" style="display:none">
+  <div class="controls">
+    <label>model <input type="text" id="modelBox" placeholder="70b"></label>
+    <label>quant <select id="quantSel"></select></label>
+    <label>overhead <input type="number" id="ovhBox" step="0.5" min="0"> GB</label>
+    <button id="shareLlm">copy link</button>
+  </div>
+  <p class="hint" id="weightsLine"></p>
+
+  <h2>token/s ceilings</h2>
+  <table id="llmTbl"></table>
+  <p class="verdict" id="llmVerdict"></p>
+  <div class="bars" id="llmBars"></div>
+  <p class="hint">these are roofline ceilings, not predictions: decode reads every
+  weight once per token, prefill is ~2 flops per parameter per token. well-tuned
+  stacks land at 50-85% of the ceiling, none land above. quant sizes are
+  gguf-realistic effective bytes per parameter.</p>
+</div>
 
 <footer>
-run this locally with more cards and live-device numbers: <code>uvx kernelmeter compare 4090 h100-sxm --ai 0.33</code>
+run this locally with more options and live-device numbers: <code>uvx kernelmeter llm 70b --gpus 4090,a100-80gb</code>
 &middot; <a href="https://github.com/nuemaan/kernelmeter">star the repo</a> if this saved you a bad rental
 </footer>
 
@@ -64,13 +99,23 @@ run this locally with more cards and live-device numbers: <code>uvx kernelmeter 
 <script>
 const DB = JSON.parse(document.getElementById("db").textContent);
 const COLORS = ["#58a6ff","#7ee787","#f0883e","#d2a8ff","#ff7b72"];
-const state = { gpus: ["rtx-4090","a100-80gb","h100-sxm"], ai: 0.33, tensor: false, cost: {} };
+const QUANTS = {"f16":2.0,"bf16":2.0,"q8":1.07,"q6":0.82,"q5":0.70,"q4":0.58,"q3":0.44};
+const state = {
+  mode: "kernel",
+  gpus: ["rtx-4090","a100-80gb","h100-sxm"], cost: {},
+  ai: 0.33, tensor: false,
+  model: "70b", quant: "q4", overhead: 2,
+};
 
 function fromUrl(){
   const p = new URLSearchParams(location.search);
+  if (p.get("mode") === "llm") state.mode = "llm";
   if (p.get("gpus")) state.gpus = p.get("gpus").split(",").filter(id => DB.some(d => d.id === id));
   if (p.get("ai")) state.ai = Math.max(0.01, parseFloat(p.get("ai")) || 0.33);
   if (p.get("tensor")) state.tensor = p.get("tensor") === "1";
+  if (p.get("model")) state.model = p.get("model");
+  if (p.get("quant") && QUANTS[p.get("quant")]) state.quant = p.get("quant");
+  if (p.get("overhead")) state.overhead = Math.max(0, parseFloat(p.get("overhead")) || 2);
   if (p.get("cost")) for (const pair of p.get("cost").split(",")) {
     const [id, v] = pair.split(":");
     if (parseFloat(v) > 0) state.cost[id] = parseFloat(v);
@@ -78,9 +123,15 @@ function fromUrl(){
 }
 function toUrl(){
   const p = new URLSearchParams();
+  if (state.mode === "llm") p.set("mode", "llm");
   p.set("gpus", state.gpus.join(","));
-  p.set("ai", state.ai);
-  if (state.tensor) p.set("tensor", "1");
+  if (state.mode === "llm") {
+    p.set("model", state.model); p.set("quant", state.quant);
+    if (state.overhead !== 2) p.set("overhead", state.overhead);
+  } else {
+    p.set("ai", state.ai);
+    if (state.tensor) p.set("tensor", "1");
+  }
   const costs = state.gpus.filter(id => state.cost[id]).map(id => id + ":" + state.cost[id]);
   if (costs.length) p.set("cost", costs.join(","));
   history.replaceState(null, "", "?" + p.toString());
@@ -91,6 +142,12 @@ const roofTf = s => state.tensor && s.theoretical_fp16_tensor_tflops ? s.theoret
 const attainable = (s, ai) => Math.min(roofTf(s), ai * s.theoretical_mem_bandwidth_gb_s / 1000);
 const ridge = s => 1000 * roofTf(s) / s.theoretical_mem_bandwidth_gb_s;
 
+function parseParams(text){
+  const m = /^([\d.]+)\s*([bm]?)$/.exec(text.trim().toLowerCase());
+  if (!m) return null;
+  return parseFloat(m[1]) * ({b:1e9, m:1e6, "": 1})[m[2]];
+}
+
 function renderChips(){
   const box = document.getElementById("chips");
   box.innerHTML = "";
@@ -98,7 +155,7 @@ function renderChips(){
     const el = document.createElement("span");
     el.className = "chip" + (state.gpus.includes(d.id) ? " on" : "");
     el.textContent = d.id;
-    el.title = d.name;
+    el.title = d.name + ", " + d.vram_gb + "GB";
     el.onclick = () => {
       const i = state.gpus.indexOf(d.id);
       if (i >= 0) state.gpus.splice(i, 1);
@@ -121,7 +178,7 @@ function renderCosts(){
     inp.oninput = () => {
       const v = parseFloat(inp.value);
       if (v > 0) state.cost[id] = v; else delete state.cost[id];
-      renderTable(); toUrl();
+      renderTable(); renderLlm(); toUrl();
     };
     wrap.appendChild(inp);
     box.appendChild(wrap);
@@ -134,11 +191,11 @@ function renderTable(){
   const anyCost = rows.some(s => state.cost[s.id]);
   const base = attainable(rows[0], state.ai);
   let html = "<tr><th>card</th><th>bw GB/s</th><th>fp32 TF</th><th>fp16 TC</th><th>ridge</th><th>attainable TF</th><th>vs " + rows[0].id + "</th>" + (anyCost ? "<th>$/hr</th><th>TF per $</th>" : "") + "</tr>";
-  let bestPerDollar = null;
+  let best = null;
   if (anyCost) {
     for (const s of rows) if (state.cost[s.id]) {
       const v = attainable(s, state.ai) / state.cost[s.id];
-      if (!bestPerDollar || v > bestPerDollar.v) bestPerDollar = { id: s.id, v };
+      if (!best || v > best.v) best = { id: s.id, v };
     }
   }
   for (const s of rows) {
@@ -148,7 +205,7 @@ function renderTable(){
     if (anyCost) {
       const c = state.cost[s.id];
       const perD = c ? (att / c) : null;
-      const cls = bestPerDollar && bestPerDollar.id === s.id ? " class=best" : "";
+      const cls = best && best.id === s.id ? " class=best" : "";
       html += "<td>" + (c ? c.toFixed(2) : "-") + "</td><td" + cls + ">" + (perD ? perD.toFixed(2) : "-") + "</td>";
     }
     html += "</tr>";
@@ -160,7 +217,7 @@ function renderTable(){
   let verdict = allMem ? "every card is memory-bound here: bandwidth is what you're buying"
               : allComp ? "every card is compute-bound here: buy FLOPs, not bandwidth"
               : "mixed: some cards are memory-bound at this intensity, some are not";
-  if (bestPerDollar) verdict += " - best value: " + bestPerDollar.id;
+  if (best) verdict += " - best value: " + best.id;
   document.getElementById("verdict").textContent = verdict;
 }
 
@@ -193,21 +250,108 @@ function renderChart(){
   document.getElementById("chart").innerHTML = svg;
 }
 
+function renderLlm(){
+  const params = parseParams(state.model);
+  const line = document.getElementById("weightsLine");
+  const rows = state.gpus.map(spec);
+  if (params === null) {
+    line.textContent = "can't read \"" + state.model + "\" - try 70b, 8b, 900m";
+    document.getElementById("llmTbl").innerHTML = "";
+    document.getElementById("llmBars").innerHTML = "";
+    document.getElementById("llmVerdict").textContent = "";
+    return;
+  }
+  const bpp = QUANTS[state.quant];
+  const weights = params * bpp;
+  line.textContent = state.model + " at " + state.quant + " (~" + bpp + " bytes/param): " +
+    (weights / 1e9).toFixed(1) + " GB of weights, plus " + state.overhead + " GB overhead for kv/activations";
+
+  if (!rows.length) { document.getElementById("llmTbl").innerHTML = ""; document.getElementById("llmVerdict").textContent = "pick at least one card"; document.getElementById("llmBars").innerHTML = ""; return; }
+  const ests = rows.map(s => {
+    const fits = weights + state.overhead * 1e9 <= s.vram_gb * 1024 ** 3;
+    const compute = s.theoretical_fp16_tensor_tflops || s.theoretical_fp32_tflops;
+    return {
+      s, fits,
+      decode: fits ? s.theoretical_mem_bandwidth_gb_s * 1e9 / weights : null,
+      prefill: fits ? compute * 1e12 / (2 * params) : null,
+    };
+  });
+  const anyCost = ests.some(e => state.cost[e.s.id]);
+  let best = null;
+  if (anyCost) for (const e of ests) if (e.decode && state.cost[e.s.id]) {
+    const v = e.decode / state.cost[e.s.id];
+    if (!best || v > best.v) best = { id: e.s.id, v };
+  }
+  let html = "<tr><th>card</th><th>vram</th><th>fits</th><th>decode t/s</th><th>prefill t/s</th>" + (anyCost ? "<th>$/hr</th><th>t/s per $</th>" : "") + "</tr>";
+  for (const e of ests) {
+    html += "<tr" + (e.fits ? "" : " class=nofit") + "><td>" + e.s.id + "</td><td>" + e.s.vram_gb + "GB</td><td>" + (e.fits ? "yes" : "no") + "</td><td>" +
+      (e.decode ? e.decode.toFixed(0) : "-") + "</td><td>" + (e.prefill ? e.prefill.toFixed(0) : "-") + "</td>";
+    if (anyCost) {
+      const c = state.cost[e.s.id];
+      const cls = best && best.id === e.s.id ? " class=best" : "";
+      html += "<td>" + (c ? c.toFixed(2) : "-") + "</td><td" + cls + ">" + (c && e.decode ? (e.decode / c).toFixed(1) : "-") + "</td>";
+    }
+    html += "</tr>";
+  }
+  document.getElementById("llmTbl").innerHTML = html;
+
+  const fitting = ests.filter(e => e.fits);
+  let verdict = fitting.length === 0 ? "nothing selected can hold this model, pick bigger cards or a smaller quant"
+    : best ? "best tokens per dollar: " + best.id
+    : "fastest ceiling: " + fitting.reduce((a, b) => a.decode > b.decode ? a : b).s.id;
+  document.getElementById("llmVerdict").textContent = verdict;
+
+  const maxDecode = Math.max(1, ...fitting.map(e => e.decode));
+  let bars = "";
+  ests.forEach((e, i) => {
+    const w = e.decode ? Math.max(2, 100 * e.decode / maxDecode) : 2;
+    const color = e.fits ? COLORS[i % COLORS.length] : "#30363d";
+    bars += '<div class="barrow"><span class="lbl">' + e.s.id + '</span>' +
+      '<div class="bartrack"><div class="barfill" style="width:' + w.toFixed(1) + '%;background:' + color + '"></div></div>' +
+      '<span class="barval">' + (e.decode ? e.decode.toFixed(0) + " t/s" : "doesn't fit") + "</span></div>";
+  });
+  document.getElementById("llmBars").innerHTML = bars;
+}
+
 function update(){
+  document.getElementById("tabKernel").className = state.mode === "kernel" ? "on" : "";
+  document.getElementById("tabLlm").className = state.mode === "llm" ? "on" : "";
+  document.getElementById("kernelView").style.display = state.mode === "kernel" ? "" : "none";
+  document.getElementById("llmView").style.display = state.mode === "llm" ? "" : "none";
   document.getElementById("aiSlider").value = Math.log2(state.ai);
   document.getElementById("aiBox").value = state.ai;
   document.getElementById("tensor").checked = state.tensor;
-  renderChips(); renderCosts(); renderTable(); renderChart(); toUrl();
+  document.getElementById("modelBox").value = state.model;
+  document.getElementById("quantSel").value = state.quant;
+  document.getElementById("ovhBox").value = state.overhead;
+  renderChips(); renderCosts();
+  if (state.mode === "kernel") { renderTable(); renderChart(); } else { renderLlm(); }
+  toUrl();
 }
 
+const quantSel = document.getElementById("quantSel");
+for (const q of Object.keys(QUANTS)) {
+  const o = document.createElement("option");
+  o.value = q; o.textContent = q;
+  quantSel.appendChild(o);
+}
+
+document.getElementById("tabKernel").onclick = () => { state.mode = "kernel"; update(); };
+document.getElementById("tabLlm").onclick = () => { state.mode = "llm"; update(); };
 document.getElementById("aiSlider").oninput = e => { state.ai = +Math.pow(2, parseFloat(e.target.value)).toFixed(3); update(); };
 document.getElementById("aiBox").onchange = e => { state.ai = Math.max(0.01, parseFloat(e.target.value) || 0.33); update(); };
 document.getElementById("tensor").onchange = e => { state.tensor = e.target.checked; update(); };
-document.getElementById("share").onclick = () => {
-  navigator.clipboard.writeText(location.href);
-  document.getElementById("share").textContent = "copied";
-  setTimeout(() => document.getElementById("share").textContent = "copy link", 1200);
-};
+document.getElementById("modelBox").onchange = e => { state.model = e.target.value || "70b"; update(); };
+quantSel.onchange = e => { state.quant = e.target.value; update(); };
+document.getElementById("ovhBox").onchange = e => { state.overhead = Math.max(0, parseFloat(e.target.value) || 0); update(); };
+for (const id of ["share", "shareLlm"]) {
+  const btn = document.getElementById(id);
+  btn.onclick = () => {
+    navigator.clipboard.writeText(location.href);
+    btn.textContent = "copied";
+    setTimeout(() => btn.textContent = "copy link", 1200);
+  };
+}
 
 fromUrl();
 update();
