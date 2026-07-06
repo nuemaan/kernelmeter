@@ -180,7 +180,7 @@ def cmd_bench(args: argparse.Namespace) -> int:
         )
         return 1
 
-    results = _bench.run_registry(flush_l2=not args.no_flush_l2)
+    results = _bench.run_registry(flush_l2=not args.no_flush_l2, device_index=args.device)
 
     if args.save:
         with open(args.save, "w") as fh:
@@ -326,6 +326,9 @@ def cmd_occupancy(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         source = f"compute capability {args.cc}"
+        if (major, minor) not in _occupancy.ARCH_LIMITS:
+            known = max(cc for cc in _occupancy.ARCH_LIMITS if cc <= (major, minor))
+            source += f" (limits borrowed from {known[0]}.{known[1]}, nearest known arch)"
     else:
         try:
             limits = _occupancy.limits_from_attrs(_device_attrs(args.device))
@@ -460,6 +463,7 @@ def cmd_llm(args: argparse.Namespace) -> int:
 
     try:
         params = _llm.parse_params(args.params)
+        active = _llm.parse_params(args.active_params) if args.active_params else None
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -476,7 +480,9 @@ def cmd_llm(args: argparse.Namespace) -> int:
         bpp = _llm.QUANTS[args.quant]
         quant_label = f"{args.quant} (~{bpp} bytes/param)"
 
-    # (display name, bandwidth, compute peak, vram bytes, vram display)
+    n = args.num_gpus
+    # (display name, bandwidth, compute peak, vram bytes, vram display,
+    #  $/hr per card, tdp watts, consumer?)
     cards = []
     if args.gpus:
         try:
@@ -489,9 +495,12 @@ def cmd_llm(args: argparse.Namespace) -> int:
         for spec in specs:
             p = spec.peaks()
             compute = p.fp16_tensor_tflops or p.fp32_tflops
+            if spec.is_consumer and p.fp16_tensor_tflops:
+                compute /= 2  # fp32-accumulate rate, what inference stacks use
+            vram_label = f"{n}x{spec.vram_gb}GB" if n > 1 else f"{spec.vram_gb}GB"
             cards.append(
-                (spec.id, p.mem_bandwidth_gbs, compute,
-                 spec.vram_gb * 1024**3, f"{spec.vram_gb}GB", costs.get(spec.id))
+                (spec.id, p.mem_bandwidth_gbs, compute, spec.vram_gb * 1024**3,
+                 vram_label, costs.get(spec.id), spec.tdp_w, spec.is_consumer)
             )
     else:
         try:
@@ -506,43 +515,86 @@ def cmd_llm(args: argparse.Namespace) -> int:
             )
             return 1
         compute = p.fp16_tensor_tflops or p.fp32_tflops
+        consumer = dev.name.startswith(("GeForce", "NVIDIA GeForce", "Titan"))
+        if consumer and p.fp16_tensor_tflops:
+            compute /= 2
+        tdp = None
+        try:
+            from . import nvml as _nvml
+
+            nv = _nvml.Nvml()
+            tdp = nv.power_limit_w(nv.device(args.device))
+            nv.close()
+        except Exception:
+            pass
         cards.append(
-            (dev.name, p.mem_bandwidth_gbs, compute,
-             dev.total_mem_bytes, f"{dev.total_mem_bytes / 2**30:.0f}GB", None)
+            (dev.name, p.mem_bandwidth_gbs, compute, dev.total_mem_bytes,
+             f"{dev.total_mem_bytes / 2**30:.0f}GB", None, tdp, consumer)
         )
 
     weights_gb = _llm.weight_bytes(params, bpp) / 1e9
-    print(f"{args.params} model at {quant_label}: {weights_gb:.1f} GB of weights\n")
+    line = f"{args.params} model at {quant_label}: {weights_gb:.1f} GB of weights"
+    if active:
+        line += f", {args.active_params} active ({_llm.weight_bytes(active, bpp) / 1e9:.1f} GB read per token)"
+    if n > 1:
+        line += f", split over {n} gpus"
+    print(line + "\n")
 
     any_cost = any(c[5] for c in cards)
-    header = f"{'card':<24} {'vram':>6} {'fits':>5} {'decode t/s':>11} {'prefill t/s':>12}"
+    batched = args.batch > 1
+    header = f"{'card':<24} {'vram':>8} {'fits':>5} {'decode t/s':>11}"
+    if batched:
+        header += f" {'/stream':>8}"
+    header += f" {'prefill t/s':>12}"
     if any_cost:
         header += f" {'$/hr':>6} {'t/s per $':>10}"
+    if args.per_watt:
+        header += f" {'t/s per W':>10}"
     print(header)
     print("-" * len(header))
-    results = []
-    for name, bw, compute, vram_bytes, vram_label, cost in cards:
+    for name, bw, compute, vram_bytes, vram_label, cost, tdp, _consumer in cards:
         est = _llm.estimate(
-            name, bw, compute, vram_bytes, params, bpp, overhead_gb=args.overhead_gb
+            name, bw, compute, vram_bytes, params, bpp,
+            overhead_gb=args.overhead_gb, active_params=active,
+            num_gpus=n, batch=args.batch,
         )
-        results.append(est)
         fits = "-" if est.fits is None else ("yes" if est.fits else "no")
         decode = f"{est.decode_tps:.0f}" if est.decode_tps else "-"
         prefill = f"{est.prefill_tps:.0f}" if est.prefill_tps else "-"
-        line = f"{name:<24} {vram_label:>6} {fits:>5} {decode:>11} {prefill:>12}"
+        row = f"{name:<24} {vram_label:>8} {fits:>5} {decode:>11}"
+        if batched:
+            stream = f"{est.per_stream_tps:.0f}" if est.per_stream_tps else "-"
+            row += f" {stream:>8}"
+        row += f" {prefill:>12}"
         if any_cost:
-            if cost and est.decode_tps:
-                line += f" {cost:>6.2f} {est.decode_tps / cost:>10.1f}"
+            total_cost = cost * n if cost else None
+            if total_cost and est.decode_tps:
+                row += f" {total_cost:>6.2f} {est.decode_tps / total_cost:>10.1f}"
             else:
-                line += f" {'-':>6} {'-':>10}"
-        print(line)
+                row += f" {'-':>6} {'-':>10}"
+        if args.per_watt:
+            if tdp and est.decode_tps:
+                row += f" {est.decode_tps / (tdp * n):>10.2f}"
+            else:
+                row += f" {'-':>10}"
+        print(row)
 
-    print(
-        "\nthese are roofline ceilings (decode reads every weight once per "
-        "token), not\npredictions: well-tuned stacks land at 50-85% of them, "
-        "none land above. kv cache\nand activations need room on top of the "
-        f"weights ({args.overhead_gb:g} GB assumed here)."
-    )
+    notes = [
+        "these are roofline ceilings, not predictions: well-tuned stacks land at "
+        "50-85%\nof them, none land above. kv cache and activations need room on "
+        f"top of the\nweights ({args.overhead_gb:g} GB per gpu assumed here)."
+    ]
+    if any(c[7] for c in cards):
+        notes.append(
+            "geforce/titan prefill uses the fp32-accumulate tensor rate "
+            "(half the fp16 peak)."
+        )
+    if n > 1:
+        notes.append(
+            "multi-gpu numbers assume an ideal tensor-parallel split; "
+            "interconnect costs extra."
+        )
+    print("\n" + "\n".join(notes))
     return 0
 
 
@@ -600,7 +652,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 def cmd_ceiling(args: argparse.Namespace) -> int:
     from . import ceiling as _ceiling
 
-    results = _ceiling.measure(mb=args.mb, matmul_n=args.matmul_n)
+    results = _ceiling.measure(mb=args.mb, matmul_n=args.matmul_n, device_index=args.device)
     if args.json:
         print(json.dumps([r.as_dict() for r in results], indent=2))
     else:
@@ -624,6 +676,7 @@ def main(argv: list[str] | None = None) -> int:
     p_bench.add_argument(
         "--compare", metavar="FILE", help="compare against results saved with --save"
     )
+    p_bench.add_argument("--device", type=int, default=0, help="cuda device index")
     p_bench.add_argument(
         "--no-flush-l2",
         action="store_true",
@@ -664,8 +717,20 @@ def main(argv: list[str] | None = None) -> int:
         "--gpus", nargs="+",
         help="cards from the database (default: the local device)",
     )
-    p_llm.add_argument("--cost", help="rental prices, e.g. 4090=0.35,h100-sxm=2.69")
+    p_llm.add_argument("--cost", help="rental prices per card, e.g. 4090=0.35,h100-sxm=2.69")
     p_llm.add_argument("--overhead-gb", type=float, default=2.0)
+    p_llm.add_argument(
+        "--num-gpus", type=int, default=1,
+        help="tensor-parallel split over this many identical cards",
+    )
+    p_llm.add_argument(
+        "--active-params", help="active parameters for MoE models, e.g. 37b"
+    )
+    p_llm.add_argument(
+        "--batch", type=int, default=1,
+        help="concurrent decode streams; weights amortize until the compute roof",
+    )
+    p_llm.add_argument("--per-watt", action="store_true", help="add a tokens/s per watt column")
     p_llm.add_argument("--device", type=int, default=0)
     p_llm.set_defaults(func=cmd_llm)
 
@@ -686,6 +751,7 @@ def main(argv: list[str] | None = None) -> int:
     p_ceil = sub.add_parser("ceiling", help="measure real achievable bandwidth and FP32")
     p_ceil.add_argument("--mb", type=int, default=256, help="working-set size per array")
     p_ceil.add_argument("--matmul-n", type=int, default=4096, help="matmul size for the FP32 test")
+    p_ceil.add_argument("--device", type=int, default=0, help="cuda device index")
     p_ceil.add_argument("--json", action="store_true", help="machine-readable output")
     p_ceil.set_defaults(func=cmd_ceiling)
 

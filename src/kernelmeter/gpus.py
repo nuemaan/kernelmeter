@@ -31,6 +31,12 @@ class GpuSpec:
     tdp_w: int
     vram_gb: int
 
+    @property
+    def is_consumer(self) -> bool:
+        """GeForce and Titan parts run tensor cores at half rate when
+        accumulating in fp32, which is what inference stacks do."""
+        return self.name.startswith(("GeForce", "Titan"))
+
     def peaks(self) -> _peaks.Peaks:
         clock_khz = self.boost_mhz * 1000
         return _peaks.Peaks(

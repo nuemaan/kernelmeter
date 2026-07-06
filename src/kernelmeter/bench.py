@@ -239,17 +239,22 @@ def _check_correctness(spec: BenchSpec, args: tuple) -> tuple[bool, float]:
         return False, max_err
 
 
-def device_peaks() -> _peaks.Peaks:
+def device_peaks(device_index: int = 0) -> _peaks.Peaks:
     drv = Driver()
-    dev = drv.device(0)
+    dev = drv.device(device_index)
     return _peaks.derive(_attrs.query_all(drv, dev))
 
 
-def run(spec: BenchSpec, peaks: _peaks.Peaks | None = None, flush_l2: bool = True) -> BenchResult:
+def run(
+    spec: BenchSpec,
+    peaks: _peaks.Peaks | None = None,
+    flush_l2: bool = True,
+    device_index: int = 0,
+) -> BenchResult:
     """Execute one spec on the current CUDA device."""
     if peaks is None:
         try:
-            peaks = device_peaks()
+            peaks = device_peaks(device_index)
         except CudaNotAvailableError:
             peaks = _peaks.Peaks(None, None, None)
 
@@ -263,7 +268,7 @@ def run(spec: BenchSpec, peaks: _peaks.Peaks | None = None, flush_l2: bool = Tru
     try:
         from . import nvml as _nvml
 
-        monitor = _nvml.Monitor()
+        monitor = _nvml.Monitor(device_index=device_index)
         monitor.start()
     except Exception:
         monitor = None
@@ -324,15 +329,19 @@ def run(spec: BenchSpec, peaks: _peaks.Peaks | None = None, flush_l2: bool = Tru
     )
 
 
-def run_registry(flush_l2: bool = True) -> list[BenchResult]:
+def run_registry(flush_l2: bool = True, device_index: int = 0) -> list[BenchResult]:
+    if device_index:
+        import torch
+
+        torch.cuda.set_device(device_index)
     try:
-        peaks = device_peaks()
+        peaks = device_peaks(device_index)
     except CudaNotAvailableError:
         peaks = _peaks.Peaks(None, None, None)
     results = []
     for spec in REGISTRY:
         try:
-            results.append(run(spec, peaks=peaks, flush_l2=flush_l2))
+            results.append(run(spec, peaks=peaks, flush_l2=flush_l2, device_index=device_index))
         except Exception as exc:  # surface per-kernel failures, keep going
             results.append(
                 BenchResult(

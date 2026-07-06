@@ -74,7 +74,10 @@ more: <a href="https://github.com/nuemaan/kernelmeter">github.com/nuemaan/kernel
 <div id="llmView" style="display:none">
   <div class="controls">
     <label>model <input type="text" id="modelBox" placeholder="70b"></label>
+    <label>active <input type="text" id="activeBox" placeholder="dense" title="active params for moe, e.g. 37b"></label>
     <label>quant <select id="quantSel"></select></label>
+    <label>gpus <select id="ngpuSel"><option>1</option><option>2</option><option>4</option><option>8</option></select></label>
+    <label>batch <input type="number" id="batchBox" min="1" step="1"></label>
     <label>overhead <input type="number" id="ovhBox" step="0.5" min="0"> GB</label>
     <button id="shareLlm">copy link</button>
   </div>
@@ -85,9 +88,11 @@ more: <a href="https://github.com/nuemaan/kernelmeter">github.com/nuemaan/kernel
   <p class="verdict" id="llmVerdict"></p>
   <div class="bars" id="llmBars"></div>
   <p class="hint">these are roofline ceilings, not predictions: decode reads every
-  weight once per token, prefill is ~2 flops per parameter per token. well-tuned
-  stacks land at 50-85% of the ceiling, none land above. quant sizes are
-  gguf-realistic effective bytes per parameter.</p>
+  active weight once per step, prefill is ~2 flops per active parameter per token.
+  well-tuned stacks land at 50-85% of the ceiling, none land above. quant sizes are
+  gguf-realistic effective bytes per parameter. geforce/titan prefill uses the
+  fp32-accumulate tensor rate (half the fp16 peak). multi-gpu assumes an ideal
+  tensor-parallel split; interconnect costs extra.</p>
 </div>
 
 <footer>
@@ -104,7 +109,7 @@ const state = {
   mode: "kernel",
   gpus: ["rtx-4090","a100-80gb","h100-sxm"], cost: {},
   ai: 0.33, tensor: false,
-  model: "70b", quant: "q4", overhead: 2,
+  model: "70b", quant: "q4", overhead: 2, active: "", ngpus: 1, batch: 1,
 };
 
 function fromUrl(){
@@ -116,6 +121,9 @@ function fromUrl(){
   if (p.get("model")) state.model = p.get("model");
   if (p.get("quant") && QUANTS[p.get("quant")]) state.quant = p.get("quant");
   if (p.get("overhead")) state.overhead = Math.max(0, parseFloat(p.get("overhead")) || 2);
+  if (p.get("active")) state.active = p.get("active");
+  if (p.get("ngpus")) state.ngpus = [1,2,4,8].includes(parseInt(p.get("ngpus"))) ? parseInt(p.get("ngpus")) : 1;
+  if (p.get("batch")) state.batch = Math.max(1, parseInt(p.get("batch")) || 1);
   if (p.get("cost")) for (const pair of p.get("cost").split(",")) {
     const [id, v] = pair.split(":");
     if (parseFloat(v) > 0) state.cost[id] = parseFloat(v);
@@ -128,6 +136,9 @@ function toUrl(){
   if (state.mode === "llm") {
     p.set("model", state.model); p.set("quant", state.quant);
     if (state.overhead !== 2) p.set("overhead", state.overhead);
+    if (state.active) p.set("active", state.active);
+    if (state.ngpus > 1) p.set("ngpus", state.ngpus);
+    if (state.batch > 1) p.set("batch", state.batch);
   } else {
     p.set("ai", state.ai);
     if (state.tensor) p.set("tensor", "1");
@@ -252,51 +263,66 @@ function renderChart(){
 
 function renderLlm(){
   const params = parseParams(state.model);
+  const active = state.active ? parseParams(state.active) : null;
   const line = document.getElementById("weightsLine");
   const rows = state.gpus.map(spec);
-  if (params === null) {
-    line.textContent = "can't read \"" + state.model + "\" - try 70b, 8b, 900m";
+  if (params === null || (state.active && active === null)) {
+    line.textContent = "can't read the model size - try 70b, 8b, 900m";
     document.getElementById("llmTbl").innerHTML = "";
     document.getElementById("llmBars").innerHTML = "";
     document.getElementById("llmVerdict").textContent = "";
     return;
   }
   const bpp = QUANTS[state.quant];
+  const n = state.ngpus, batch = state.batch;
   const weights = params * bpp;
-  line.textContent = state.model + " at " + state.quant + " (~" + bpp + " bytes/param): " +
-    (weights / 1e9).toFixed(1) + " GB of weights, plus " + state.overhead + " GB overhead for kv/activations";
+  const readBytes = (active || params) * bpp;
+  let desc = state.model + " at " + state.quant + " (~" + bpp + " bytes/param): " +
+    (weights / 1e9).toFixed(1) + " GB of weights";
+  if (active) desc += ", " + state.active + " active (" + (readBytes / 1e9).toFixed(1) + " GB read per step)";
+  if (n > 1) desc += ", split over " + n + " gpus";
+  line.textContent = desc + ", plus " + state.overhead + " GB overhead per gpu";
 
   if (!rows.length) { document.getElementById("llmTbl").innerHTML = ""; document.getElementById("llmVerdict").textContent = "pick at least one card"; document.getElementById("llmBars").innerHTML = ""; return; }
   const ests = rows.map(s => {
-    const fits = weights + state.overhead * 1e9 <= s.vram_gb * 1024 ** 3;
-    const compute = s.theoretical_fp16_tensor_tflops || s.theoretical_fp32_tflops;
-    return {
-      s, fits,
-      decode: fits ? s.theoretical_mem_bandwidth_gb_s * 1e9 / weights : null,
-      prefill: fits ? compute * 1e12 / (2 * params) : null,
-    };
+    const fits = weights / n + state.overhead * 1e9 <= s.vram_gb * 1024 ** 3;
+    const consumer = s.name.startsWith("GeForce") || s.name.startsWith("Titan");
+    let compute = s.theoretical_fp16_tensor_tflops || s.theoretical_fp32_tflops;
+    if (consumer && s.theoretical_fp16_tensor_tflops) compute /= 2;
+    if (!fits) return { s, fits, decode: null, stream: null, prefill: null };
+    const bw = s.theoretical_mem_bandwidth_gb_s * 1e9 * n;
+    const comp = compute * 1e12 * n;
+    const stepMem = readBytes / bw;
+    const stepComp = 2 * (active || params) * batch / comp;
+    const step = Math.max(stepMem, stepComp);
+    return { s, fits, decode: batch / step, stream: 1 / step, prefill: comp / (2 * (active || params)) };
   });
   const anyCost = ests.some(e => state.cost[e.s.id]);
   let best = null;
   if (anyCost) for (const e of ests) if (e.decode && state.cost[e.s.id]) {
-    const v = e.decode / state.cost[e.s.id];
+    const v = e.decode / (state.cost[e.s.id] * n);
     if (!best || v > best.v) best = { id: e.s.id, v };
   }
-  let html = "<tr><th>card</th><th>vram</th><th>fits</th><th>decode t/s</th><th>prefill t/s</th>" + (anyCost ? "<th>$/hr</th><th>t/s per $</th>" : "") + "</tr>";
+  let html = "<tr><th>card</th><th>vram</th><th>fits</th><th>decode t/s</th>" +
+    (batch > 1 ? "<th>/stream</th>" : "") + "<th>prefill t/s</th>" +
+    (anyCost ? "<th>$/hr</th><th>t/s per $</th>" : "") + "</tr>";
   for (const e of ests) {
-    html += "<tr" + (e.fits ? "" : " class=nofit") + "><td>" + e.s.id + "</td><td>" + e.s.vram_gb + "GB</td><td>" + (e.fits ? "yes" : "no") + "</td><td>" +
-      (e.decode ? e.decode.toFixed(0) : "-") + "</td><td>" + (e.prefill ? e.prefill.toFixed(0) : "-") + "</td>";
+    const vlabel = (n > 1 ? n + "x" : "") + e.s.vram_gb + "GB";
+    html += "<tr" + (e.fits ? "" : " class=nofit") + "><td>" + e.s.id + "</td><td>" + vlabel + "</td><td>" + (e.fits ? "yes" : "no") + "</td><td>" +
+      (e.decode ? e.decode.toFixed(0) : "-") + "</td>";
+    if (batch > 1) html += "<td>" + (e.stream ? e.stream.toFixed(0) : "-") + "</td>";
+    html += "<td>" + (e.prefill ? e.prefill.toFixed(0) : "-") + "</td>";
     if (anyCost) {
       const c = state.cost[e.s.id];
       const cls = best && best.id === e.s.id ? " class=best" : "";
-      html += "<td>" + (c ? c.toFixed(2) : "-") + "</td><td" + cls + ">" + (c && e.decode ? (e.decode / c).toFixed(1) : "-") + "</td>";
+      html += "<td>" + (c ? (c * n).toFixed(2) : "-") + "</td><td" + cls + ">" + (c && e.decode ? (e.decode / (c * n)).toFixed(1) : "-") + "</td>";
     }
     html += "</tr>";
   }
   document.getElementById("llmTbl").innerHTML = html;
 
   const fitting = ests.filter(e => e.fits);
-  let verdict = fitting.length === 0 ? "nothing selected can hold this model, pick bigger cards or a smaller quant"
+  let verdict = fitting.length === 0 ? "nothing selected can hold this model, add gpus, pick bigger cards or a smaller quant"
     : best ? "best tokens per dollar: " + best.id
     : "fastest ceiling: " + fitting.reduce((a, b) => a.decode > b.decode ? a : b).s.id;
   document.getElementById("llmVerdict").textContent = verdict;
@@ -324,6 +350,9 @@ function update(){
   document.getElementById("modelBox").value = state.model;
   document.getElementById("quantSel").value = state.quant;
   document.getElementById("ovhBox").value = state.overhead;
+  document.getElementById("activeBox").value = state.active;
+  document.getElementById("ngpuSel").value = state.ngpus;
+  document.getElementById("batchBox").value = state.batch;
   renderChips(); renderCosts();
   if (state.mode === "kernel") { renderTable(); renderChart(); } else { renderLlm(); }
   toUrl();
@@ -344,6 +373,9 @@ document.getElementById("tensor").onchange = e => { state.tensor = e.target.chec
 document.getElementById("modelBox").onchange = e => { state.model = e.target.value || "70b"; update(); };
 quantSel.onchange = e => { state.quant = e.target.value; update(); };
 document.getElementById("ovhBox").onchange = e => { state.overhead = Math.max(0, parseFloat(e.target.value) || 0); update(); };
+document.getElementById("activeBox").onchange = e => { state.active = e.target.value.trim(); update(); };
+document.getElementById("ngpuSel").onchange = e => { state.ngpus = parseInt(e.target.value); update(); };
+document.getElementById("batchBox").onchange = e => { state.batch = Math.max(1, parseInt(e.target.value) || 1); update(); };
 for (const id of ["share", "shareLlm"]) {
   const btn = document.getElementById(id);
   btn.onclick = () => {

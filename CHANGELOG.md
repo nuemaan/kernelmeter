@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 - 2026-07-07
+
+- llm: geforce/titan prefill ceilings now use the fp32-accumulate tensor
+  rate (half the fp16 marketing number), which is what inference stacks
+  actually run. datacenter cards are unchanged.
+- llm: --num-gpus splits weights over identical cards (2x3090 for a 70b),
+  --active-params handles moe models (fit needs all weights, decode reads
+  only the active ones), --batch shows total and per-stream throughput
+  ceilings, --per-watt adds tokens per watt from tdp.
+- bench and ceiling take --device, and the nvml telemetry monitor now
+  follows it: on multi-gpu machines the telemetry table used to read
+  device 0 regardless of where the kernels ran.
+- occupancy notes when a compute capability's limits are borrowed from
+  the nearest known architecture instead of failing silently.
+- ships py.typed, adds CONTRIBUTING.md.
+
 ## 0.6.0 - 2026-07-06
 
 - new `llm` command: token-throughput ceilings for llm inference from the

@@ -45,12 +45,15 @@ def _stream_specs(n: int):
 
 
 def measure(
-    mb: int = 256, matmul_n: int = 4096, warmup: int = 10, iters: int = 50
+    mb: int = 256, matmul_n: int = 4096, warmup: int = 10, iters: int = 50,
+    device_index: int = 0,
 ) -> list[CeilingResult]:
     import torch
 
+    if device_index:
+        torch.cuda.set_device(device_index)
     try:
-        device_peaks = _bench.device_peaks()
+        device_peaks = _bench.device_peaks(device_index)
     except Exception:
         device_peaks = _peaks.Peaks(None, None, None)
 

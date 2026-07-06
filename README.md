@@ -111,15 +111,16 @@ kernelmeter llm 70b --quant q4 --gpus 4090 a100-80gb h100-sxm --cost a100-80gb=1
 ```text
 70b model at q4 (~0.58 bytes/param): 40.6 GB of weights
 
-card                       vram  fits  decode t/s  prefill t/s   $/hr  t/s per $
---------------------------------------------------------------------------------
-rtx-4090                   24GB    no           -            -      -          -
-a100-80gb                  80GB   yes          50         2228   1.19       42.2
-h100-sxm                   80GB   yes          82         7647   2.69       30.6
+card                         vram  fits  decode t/s  prefill t/s   $/hr  t/s per $
+----------------------------------------------------------------------------------
+rtx-4090                     24GB    no           -            -      -          -
+a100-80gb                    80GB   yes          50         2228   1.19       42.2
+h100-sxm                     80GB   yes          82         7647   2.69       30.6
 
-these are roofline ceilings (decode reads every weight once per token), not
-predictions: well-tuned stacks land at 50-85% of them, none land above. kv cache
-and activations need room on top of the weights (2 GB assumed here).
+these are roofline ceilings, not predictions: well-tuned stacks land at 50-85%
+of them, none land above. kv cache and activations need room on top of the
+weights (2 GB per gpu assumed here).
+geforce/titan prefill uses the fp32-accumulate tensor rate (half the fp16 peak).
 ```
 
 The honesty note is the point. If someone quotes you 120 tok/s for a 70B
@@ -129,6 +130,24 @@ Quant sizes use effective bytes per parameter (gguf k-quants carry
 scales, so q4 is ~0.58, not 0.5); pass `--bytes-per-param` for an exact
 figure. With no `--gpus` it estimates for the GPU in your machine, using
 its real memory size for the fit check.
+
+It also handles the setups people actually run:
+
+* `--num-gpus 2` models the classic budget rig. Two 3090s hold a 70B q4
+  that one can't, at a ~46 t/s ceiling, and at rental prices they come
+  out around 2.5x the tokens per dollar of an A100 pair.
+* `--active-params 37b` handles MoE models: fit needs the full weights,
+  but each token only reads the active experts, which is why a 671B
+  DeepSeek decodes faster than a dense 70B on the same hardware.
+* `--batch 32` shows throughput ceilings: weight reads amortize across
+  concurrent streams until the compute roof takes over, and the table
+  splits total t/s from per-stream t/s. The crossover batch size is the
+  ridge point again, just wearing different clothes.
+* `--per-watt` adds a tokens-per-watt column from the cards' TDP.
+
+GeForce and Titan prefill ceilings use the fp32-accumulate tensor rate,
+half the marketing fp16 number, because that is what inference stacks
+actually do. Datacenter cards run full rate either way.
 
 ## Querying your GPU
 
