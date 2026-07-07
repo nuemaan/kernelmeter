@@ -111,10 +111,122 @@ def _print_nvml_extras(nvml: dict) -> None:
         print(f"  vbios (nvml)              : {nvml['vbios_version']}")
 
 
+def gather_info_amd() -> dict:
+    """AMD twin of gather_info, via the HIP runtime plus rocm-smi."""
+    from . import hipdrv as _hip
+    from . import rocmsmi as _rsmi
+
+    driver = _hip.HipDriver()
+    smi = None
+    try:
+        smi = _rsmi.RocmSmi()
+    except Exception:
+        smi = None
+
+    devices = []
+    for ordinal in range(driver.device_count()):
+        dev = driver.device(ordinal)
+        attributes = _hip.query_all(driver, dev)
+        arch = _peaks.amd_arch_from(
+            attributes.get("compute_capability_major"),
+            attributes.get("compute_capability_minor"),
+            dev.name,
+        )
+        peaks = _peaks.derive_amd(attributes, arch)
+        smi_facts = None
+        if smi is not None:
+            try:
+                vram = smi.vram_bytes(ordinal)
+                smi_facts = {
+                    "temperature_c": smi.temperature_c(ordinal),
+                    "power_w": smi.power_w(ordinal),
+                    "power_cap_w": smi.power_cap_w(ordinal),
+                    "sys_clock_mhz": smi.sys_clock_mhz(ordinal),
+                    "mem_clock_mhz": smi.mem_clock_mhz(ordinal),
+                    "vram_total_bytes": vram[0] if vram else None,
+                    "vram_used_bytes": vram[1] if vram else None,
+                }
+            except Exception:
+                smi_facts = None
+        devices.append(
+            {
+                "ordinal": ordinal,
+                "name": dev.name,
+                "total_memory_bytes": dev.total_mem_bytes,
+                "arch": arch,
+                "derived": peaks.as_dict(),
+                "smi": smi_facts,
+                "attributes": attributes,
+            }
+        )
+    if smi is not None:
+        smi.close()
+    return {"hip_runtime_version": driver.runtime_version(), "devices": devices}
+
+
+def _cmd_info_amd(args: argparse.Namespace) -> int:
+    info = gather_info_amd()
+    if args.json:
+        print(json.dumps(info, indent=2))
+        return 0
+
+    print(f"HIP runtime version : {info['hip_runtime_version']}")
+    for dev in info["devices"]:
+        gib = dev["total_memory_bytes"] / 2**30
+        print(f"\nDevice {dev['ordinal']}: {dev['name']} ({gib:.1f} GiB)")
+        derived = dev["derived"]
+        print(f"  architecture              : {dev['arch'] or '-'}")
+        print(
+            "  theoretical mem bandwidth : "
+            + _fmt(derived["theoretical_mem_bandwidth_gb_s"], " GB/s")
+        )
+        print(
+            "  theoretical FP32 peak     : "
+            + _fmt(derived["theoretical_fp32_tflops"], " TFLOP/s", nd=2)
+        )
+        if derived.get("theoretical_fp16_tensor_tflops"):
+            print(
+                "  theoretical fp16 matrix   : "
+                + _fmt(derived["theoretical_fp16_tensor_tflops"], " TFLOP/s (dense)", nd=2)
+            )
+        smi = dev.get("smi")
+        if smi:
+            bits = []
+            if smi.get("sys_clock_mhz"):
+                bits.append(f"sclk {smi['sys_clock_mhz']:.0f} MHz")
+            if smi.get("mem_clock_mhz"):
+                bits.append(f"mclk {smi['mem_clock_mhz']:.0f} MHz")
+            if smi.get("temperature_c") is not None:
+                bits.append(f"{smi['temperature_c']:.0f}C")
+            if smi.get("power_w") is not None and smi.get("power_cap_w"):
+                bits.append(f"{smi['power_w']:.0f}/{smi['power_cap_w']:.0f}W")
+            if smi.get("vram_used_bytes") is not None and smi.get("vram_total_bytes"):
+                bits.append(
+                    f"vram {smi['vram_used_bytes'] / 2**20:.0f}/"
+                    f"{smi['vram_total_bytes'] / 2**20:.0f} MiB"
+                )
+            if bits:
+                print("  live (rocm-smi): " + ", ".join(bits))
+        print(f"\n  {'attribute':<48} value")
+        print(f"  {'-' * 48} {'-' * 12}")
+        for name, value in dev["attributes"].items():
+            print(f"  {name:<48} {value}")
+    return 0
+
+
 def cmd_info(args: argparse.Namespace) -> int:
     try:
         driver = Driver()
     except CudaNotAvailableError as exc:
+        from .hipdrv import HipNotAvailableError
+
+        try:
+            return _cmd_info_amd(args)
+        except HipNotAvailableError:
+            pass
+        except Exception as amd_exc:
+            print(f"error: hip backend failed: {amd_exc}", file=sys.stderr)
+            return 1
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -464,6 +576,51 @@ def cmd_compare(args: argparse.Namespace) -> int:
 # llm
 # ---------------------------------------------------------------------------
 
+def _local_device_peaks(index: int):
+    """(name, Peaks, total_mem_bytes, tdp_w) for the local device, trying
+    CUDA first and the HIP runtime second. None when neither is present."""
+    try:
+        driver = Driver()
+        dev = driver.device(index)
+        p = _peaks.derive(_attrs.query_all(driver, dev))
+        tdp = None
+        try:
+            from . import nvml as _nvml
+
+            nv = _nvml.Nvml()
+            tdp = nv.power_limit_w(nv.device(index))
+            nv.close()
+        except Exception:
+            pass
+        return dev.name, p, dev.total_mem_bytes, tdp
+    except CudaNotAvailableError:
+        pass
+    try:
+        from . import hipdrv as _hip
+
+        driver = _hip.HipDriver()
+        dev = driver.device(index)
+        attributes = _hip.query_all(driver, dev)
+        arch = _peaks.amd_arch_from(
+            attributes.get("compute_capability_major"),
+            attributes.get("compute_capability_minor"),
+            dev.name,
+        )
+        p = _peaks.derive_amd(attributes, arch)
+        tdp = None
+        try:
+            from . import rocmsmi as _rsmi
+
+            smi = _rsmi.RocmSmi()
+            tdp = smi.power_cap_w(index)
+            smi.close()
+        except Exception:
+            pass
+        return dev.name, p, dev.total_mem_bytes, tdp
+    except Exception:
+        return None
+
+
 def cmd_llm(args: argparse.Namespace) -> int:
     from . import llm as _llm
 
@@ -513,33 +670,22 @@ def cmd_llm(args: argparse.Namespace) -> int:
                  vram_label, costs.get(spec.id), spec.tdp_w, spec.is_consumer)
             )
     else:
-        try:
-            driver = Driver()
-            dev = driver.device(args.device)
-            p = _peaks.derive(_attrs.query_all(driver, dev))
-        except CudaNotAvailableError:
+        local = _local_device_peaks(args.device)
+        if local is None:
             print(
-                "error: no CUDA device found. Pass --gpus (e.g. --gpus 4090 "
-                "a100-80gb) to estimate for cards from the database.",
+                "error: no CUDA or ROCm device found. Pass --gpus (e.g. --gpus "
+                "4090 a100-80gb) to estimate for cards from the database.",
                 file=sys.stderr,
             )
             return 1
+        name, p, total_mem, tdp = local
         compute = p.fp16_tensor_tflops or p.fp32_tflops
-        consumer = any(m in dev.name.lower() for m in ("geforce", "titan"))
+        consumer = any(m in name.lower() for m in ("geforce", "titan"))
         if consumer and p.fp16_tensor_tflops:
             compute /= 2
-        tdp = None
-        try:
-            from . import nvml as _nvml
-
-            nv = _nvml.Nvml()
-            tdp = nv.power_limit_w(nv.device(args.device))
-            nv.close()
-        except Exception:
-            pass
         cards.append(
-            (dev.name, p.mem_bandwidth_gbs, compute, dev.total_mem_bytes,
-             f"{dev.total_mem_bytes / 2**30:.0f}GB", None, tdp, consumer)
+            (name, p.mem_bandwidth_gbs, compute, total_mem,
+             f"{total_mem / 2**30:.0f}GB", None, tdp, consumer)
         )
 
     weights_gb = _llm.weight_bytes(params, bpp) / 1e9

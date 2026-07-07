@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0 - 2026-07-07
+
+- rocm live-device support, validated on an mi300x: info and the llm
+  local path now run on amd through the hip runtime (hipdrv.py, with an
+  attribute table generated from amd's headers) and rocm-smi
+  (rocmsmi.py: clocks, temperature, power, vram). bench's device peaks
+  fall through to hip too, so torch-rocm benches get a real roofline.
+- hardware finding: the hip runtime reports hbm3's quarter-rate memory
+  clock on cdna3 (1.3 ghz for 5.2 gbps/pin), so cdna3 bandwidth uses
+  four transfers per clock. verified against the mi300x's 5.3 tb/s.
+- arch detection from hip's gfx-style compute capability (9.4 -> cdna3)
+  with name tie-breaking for the gfx 9.0 generation.
+
 ## 0.8.0 - 2026-07-07
 
 - amd support in the database: mi100, mi210, mi250x, mi300x, rx 6900 xt,

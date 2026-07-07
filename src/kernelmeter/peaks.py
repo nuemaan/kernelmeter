@@ -80,6 +80,60 @@ def amd_fp16_tflops(cu_count: int, clock_khz: int, arch: str) -> float | None:
     return rate * cu_count * clock_khz * 1e3 / 1e12
 
 
+def amd_arch_from(cc_major: int | None, cc_minor: int | None, name: str) -> str | None:
+    """Map HIP's compute capability (the gfx version, e.g. gfx942 -> 9.4)
+    plus the marketing name to an architecture key. gfx 9.0 covers both
+    CDNA1 and CDNA2, so the name breaks the tie there."""
+    lowered = name.lower()
+    if cc_major == 9:
+        if cc_minor == 4:
+            return "cdna3"
+        if "mi1" in lowered:
+            return "cdna1"
+        if "mi2" in lowered:
+            return "cdna2"
+        return "cdna2"
+    if cc_major == 10:
+        return "rdna2"
+    if cc_major == 11:
+        return "rdna3"
+    if cc_major == 12:
+        return "rdna4"
+    return None
+
+
+# transfers per memory clock, per architecture. The HIP runtime reports
+# HBM3's quarter-rate clock on CDNA3 (1.3 GHz for 5.2 Gbps/pin on the
+# MI300X, verified on hardware), while HBM2/2e and GDDR6 report the
+# usual half-rate clock that the x2 DDR formula expects.
+_AMD_MEM_TRANSFERS_PER_CLOCK: dict[str, int] = {"cdna3": 4}
+
+
+def derive_amd(attrs: dict[str, int], arch: str | None) -> Peaks:
+    """AMD twin of derive(): bandwidth from memory clock and bus width,
+    compute through the per-architecture rate tables."""
+    bw = None
+    if "memory_clock_rate" in attrs and "memory_bus_width" in attrs:
+        transfers = _AMD_MEM_TRANSFERS_PER_CLOCK.get(arch or "", 2)
+        bw = (
+            transfers * attrs["memory_clock_rate"] * 1e3
+            * (attrs["memory_bus_width"] / 8.0) / 1e9
+        )
+
+    fp32 = fp16 = None
+    if arch and "multiprocessor_count" in attrs and "clock_rate" in attrs:
+        fp32 = amd_fp32_tflops(attrs["multiprocessor_count"], attrs["clock_rate"], arch)
+        fp16 = amd_fp16_tflops(attrs["multiprocessor_count"], attrs["clock_rate"], arch)
+
+    return Peaks(
+        mem_bandwidth_gbs=bw,
+        fp32_tflops=fp32,
+        compute_capability=None,
+        fp16_tensor_tflops=fp16,
+        tf32_tensor_tflops=None,
+    )
+
+
 def _tensor_tflops(table: dict, sm_count: int, clock_khz: int, major: int, minor: int) -> float | None:
     rate = table.get((major, minor))
     if rate is None:

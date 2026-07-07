@@ -240,9 +240,29 @@ def _check_correctness(spec: BenchSpec, args: tuple) -> tuple[bool, float]:
 
 
 def device_peaks(device_index: int = 0) -> _peaks.Peaks:
-    drv = Driver()
-    dev = drv.device(device_index)
-    return _peaks.derive(_attrs.query_all(drv, dev))
+    """Peaks for the local device: CUDA first, then the HIP runtime
+    (torch's cuda API is HIP on ROCm builds, so bench itself runs there).
+    Raises CudaNotAvailableError when neither backend has a device."""
+    try:
+        drv = Driver()
+        dev = drv.device(device_index)
+        return _peaks.derive(_attrs.query_all(drv, dev))
+    except CudaNotAvailableError:
+        pass
+    try:
+        from . import hipdrv as _hip
+
+        driver = _hip.HipDriver()
+        dev = driver.device(device_index)
+        attributes = _hip.query_all(driver, dev)
+        arch = _peaks.amd_arch_from(
+            attributes.get("compute_capability_major"),
+            attributes.get("compute_capability_minor"),
+            dev.name,
+        )
+        return _peaks.derive_amd(attributes, arch)
+    except Exception:
+        raise CudaNotAvailableError("no CUDA or ROCm device found")
 
 
 def run(

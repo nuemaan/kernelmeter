@@ -205,6 +205,26 @@ isn't present. (The `gen1/3 x8/16` above is the live link: an idle T4
 drops to a lower PCIe state and ramps up under load.) Add `--json` for
 machine-readable output; the NVML block lands under `devices[].nvml`.
 
+On an AMD machine the same command goes through the HIP runtime and
+rocm-smi instead. Real output from an MI300X:
+
+```text
+HIP runtime version : 70051831
+
+Device 0: AMD Instinct MI300X VF (191.7 GiB)
+  architecture              : cdna3
+  theoretical mem bandwidth : 5324.8 GB/s
+  theoretical FP32 peak     : 163.43 TFLOP/s
+  theoretical fp16 matrix   : 1307.44 TFLOP/s (dense)
+  live (rocm-smi): sclk 172 MHz, mclk 900 MHz, 147/750W, vram 286/196288 MiB
+```
+
+The attribute table below it uses hipDeviceAttribute_t names, generated
+from AMD's headers the same way the CUDA table tracks the driver enum.
+One quirk found on hardware: the HIP runtime reports HBM3's quarter-rate
+memory clock, so CDNA3 bandwidth uses four transfers per clock where
+everything else uses the usual two.
+
 ## Benchmarking a kernel
 
 Three steps.
@@ -443,11 +463,12 @@ whether your kernels are any good:
 * The tensor-core peaks are dense rates with fp16 accumulate. GeForce
   cards run tensor cores at half rate when accumulating in fp32, and
   sparse rates are double; pass `peak_tflops=...` when those apply.
-* AMD cards live in the database only for now: compare, llm, roofline
-  --gpu and report --gpu treat vendors equally, but the live-device
-  commands (info, bench, ceiling) still need CUDA. The fp16 column for
-  AMD is matrix-core throughput on CDNA and RDNA3+, packed vector math
-  on RDNA2.
+* On AMD, info and the llm local-device path run through the HIP
+  runtime and rocm-smi (validated on an MI300X); bench and ceiling
+  should work through torch's ROCm build, whose cuda API is HIP, but
+  haven't been run on AMD hardware yet. The fp16 column for AMD is
+  matrix-core throughput on CDNA and RDNA3+, packed vector math on
+  RDNA2.
 * The occupancy command implements the standard calculator model. Real
   occupancy can differ (launch bounds, driver decisions); confirm with
   Nsight Compute when it matters.
