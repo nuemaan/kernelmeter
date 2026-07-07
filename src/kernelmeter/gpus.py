@@ -23,24 +23,43 @@ from . import peaks as _peaks
 class GpuSpec:
     id: str
     name: str
-    cc: tuple[int, int]
-    sm_count: int
+    cc: tuple[int, int] | None  # nvidia compute capability; None for amd
+    sm_count: int               # SMs on nvidia, CUs on amd
     boost_mhz: int
     mem_bus_bits: int
     mem_gbps: float  # effective per-pin data rate
     tdp_w: int
     vram_gb: int
+    vendor: str = "nvidia"
+    arch: str | None = None     # amd architecture name, e.g. "cdna3"
 
     @property
     def is_consumer(self) -> bool:
         """GeForce and Titan parts run tensor cores at half rate when
-        accumulating in fp32, which is what inference stacks do."""
+        accumulating in fp32, which is what inference stacks do. This is
+        an nvidia quirk; amd matrix rates don't halve, so radeon names
+        deliberately don't match."""
         return self.name.startswith(("GeForce", "Titan"))
+
+    @property
+    def arch_label(self) -> str:
+        if self.vendor == "amd":
+            return self.arch or "-"
+        return f"{self.cc[0]}.{self.cc[1]}"
 
     def peaks(self) -> _peaks.Peaks:
         clock_khz = self.boost_mhz * 1000
+        bw = self.mem_gbps * self.mem_bus_bits / 8.0
+        if self.vendor == "amd":
+            return _peaks.Peaks(
+                mem_bandwidth_gbs=bw,
+                fp32_tflops=_peaks.amd_fp32_tflops(self.sm_count, clock_khz, self.arch),
+                compute_capability=None,
+                fp16_tensor_tflops=_peaks.amd_fp16_tflops(self.sm_count, clock_khz, self.arch),
+                tf32_tensor_tflops=None,
+            )
         return _peaks.Peaks(
-            mem_bandwidth_gbs=self.mem_gbps * self.mem_bus_bits / 8.0,
+            mem_bandwidth_gbs=bw,
             fp32_tflops=_peaks.fp32_tflops(self.sm_count, clock_khz, *self.cc),
             compute_capability=self.cc,
             fp16_tensor_tflops=_peaks.fp16_tensor_tflops(self.sm_count, clock_khz, *self.cc),
@@ -82,6 +101,17 @@ DATABASE: tuple[GpuSpec, ...] = (
     GpuSpec("rtx-5070-ti", "GeForce RTX 5070 Ti", (12, 0), 70, 2452, 256, 28.0, 300, 16),
     GpuSpec("rtx-5080", "GeForce RTX 5080", (12, 0), 84, 2617, 256, 30.0, 360, 16),
     GpuSpec("rtx-5090", "GeForce RTX 5090", (12, 0), 170, 2407, 512, 28.0, 575, 32),
+    # amd. sm_count holds compute units; rates come from the per-arch
+    # tables in peaks.py, spec-sheet asserted like everything else.
+    GpuSpec("mi100", "Instinct MI100", None, 120, 1502, 4096, 2.4, 300, 32, vendor="amd", arch="cdna1"),
+    GpuSpec("mi210", "Instinct MI210", None, 104, 1700, 4096, 3.2, 300, 64, vendor="amd", arch="cdna2"),
+    GpuSpec("mi250x", "Instinct MI250X", None, 220, 1700, 8192, 3.2, 560, 128, vendor="amd", arch="cdna2"),
+    GpuSpec("mi300x", "Instinct MI300X", None, 304, 2100, 8192, 5.176, 750, 192, vendor="amd", arch="cdna3"),
+    GpuSpec("rx-6900-xt", "Radeon RX 6900 XT", None, 80, 2250, 256, 16.0, 300, 16, vendor="amd", arch="rdna2"),
+    GpuSpec("rx-7900-xt", "Radeon RX 7900 XT", None, 84, 2400, 320, 20.0, 315, 20, vendor="amd", arch="rdna3"),
+    GpuSpec("rx-7900-xtx", "Radeon RX 7900 XTX", None, 96, 2500, 384, 20.0, 355, 24, vendor="amd", arch="rdna3"),
+    GpuSpec("rx-9070-xt", "Radeon RX 9070 XT", None, 64, 2970, 256, 20.14, 304, 16, vendor="amd", arch="rdna4"),
+    GpuSpec("w7900", "Radeon Pro W7900", None, 96, 2495, 384, 18.0, 295, 48, vendor="amd", arch="rdna3"),
 )
 
 _BY_ID = {spec.id: spec for spec in DATABASE}

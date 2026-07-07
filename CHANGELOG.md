@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0 - 2026-07-07
+
+- amd support in the database: mi100, mi210, mi250x, mi300x, rx 6900 xt,
+  rx 7900 xt/xtx, rx 9070 xt, radeon pro w7900. entries store compute
+  units and clocks, peaks derive through per-architecture rate tables
+  (cdna1-3, rdna2-4), and every derived number is asserted against the
+  vendor sheet like the nvidia entries. 40 cards total.
+- compare, llm, roofline --gpu and report --gpu treat vendors equally,
+  so cross-vendor questions like "one mi300x or one h100 for a 70b" are
+  now a one-liner. live-device commands (info, bench, ceiling) still
+  need cuda; rocm device support wants someone with the hardware.
+- the fp16 column for amd is matrix-core throughput on cdna and rdna3+,
+  packed vector math on rdna2. tf32 stays nvidia-only. the geforce
+  fp32-accumulate halving does not apply to radeon matrix rates.
+- gpus lists an arch column (compute capability for nvidia, cdna3/rdna4
+  style names for amd).
+
 ## 0.7.1 - 2026-07-07
 
 - fixed two crashes found in an edge-case audit: occupancy with an

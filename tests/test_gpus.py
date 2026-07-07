@@ -44,12 +44,49 @@ def _peaks(gpu_id):
         ("rtx-3090-ti", 1008, 40.0),
         ("rtx-5070", 672, 30.9),
         ("rtx-5070-ti", 896, 43.9),
+        # amd, same rule: derived from physical params, asserted vs vendor sheets
+        ("mi100", 1229, 23.1),
+        ("mi210", 1638, 22.6),
+        ("mi250x", 3277, 47.9),
+        ("mi300x", 5300, 163.4),
+        ("rx-6900-xt", 512, 23.0),
+        ("rx-7900-xt", 800, 51.6),
+        ("rx-7900-xtx", 960, 61.4),
+        ("rx-9070-xt", 644.5, 48.7),
+        ("w7900", 864, 61.3),
     ],
 )
 def test_derived_peaks_match_spec_sheets(gpu_id, bw, fp32):
     p = _peaks(gpu_id)
     assert p.mem_bandwidth_gbs == pytest.approx(bw, rel=0.01)
     assert p.fp32_tflops == pytest.approx(fp32, rel=0.01)
+
+
+def test_amd_fp16_matrix_rates():
+    assert _peaks("mi300x").fp16_tensor_tflops == pytest.approx(1307.4, rel=0.01)
+    assert _peaks("mi250x").fp16_tensor_tflops == pytest.approx(383, rel=0.01)
+    assert _peaks("rx-7900-xtx").fp16_tensor_tflops == pytest.approx(122.8, rel=0.01)
+
+
+def test_amd_entries_are_marked():
+    mi = gpus.resolve("mi300x")
+    assert mi.vendor == "amd"
+    assert mi.arch_label == "cdna3"
+    assert mi.cc is None
+    assert mi.peaks().tf32_tensor_tflops is None  # tf32 is an nvidia thing
+    assert gpus.resolve("4090").arch_label == "8.9"
+
+
+def test_radeon_is_not_treated_as_geforce():
+    # the fp32-accumulate halving is an nvidia tensor-core quirk
+    assert gpus.resolve("rx-7900-xtx").is_consumer is False
+
+
+def test_amd_resolve():
+    assert gpus.resolve("mi300x").id == "mi300x"
+    assert gpus.resolve("7900-xtx").id == "rx-7900-xtx"
+    with pytest.raises(gpus.UnknownGpuError, match="ambiguous"):
+        gpus.resolve("7900")  # xt, xtx and w7900 all match
 
 
 def test_known_tensor_rates():

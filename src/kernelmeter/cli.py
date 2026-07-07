@@ -368,15 +368,16 @@ def cmd_gpus(args: argparse.Namespace) -> int:
         out = []
         for spec in _gpus.DATABASE:
             entry = {
-                "id": spec.id, "name": spec.name,
-                "tdp_w": spec.tdp_w, "vram_gb": spec.vram_gb,
+                "id": spec.id, "name": spec.name, "vendor": spec.vendor,
+                "arch": spec.arch_label, "tdp_w": spec.tdp_w,
+                "vram_gb": spec.vram_gb,
             }
             entry.update(spec.peaks().as_dict())
             out.append(entry)
         print(json.dumps(out, indent=2))
         return 0
     header = (
-        f"{'id':<14} {'name':<20} {'cc':>5} {'SMs':>5} {'vram':>5} "
+        f"{'id':<14} {'name':<20} {'arch':>6} {'SM/CU':>5} {'vram':>5} "
         f"{'bw GB/s':>8} {'fp32 TF':>8} {'fp16 TC':>8} {'tdp':>5}"
     )
     print(header)
@@ -385,7 +386,7 @@ def cmd_gpus(args: argparse.Namespace) -> int:
         p = spec.peaks()
         fp16 = f"{p.fp16_tensor_tflops:.0f}" if p.fp16_tensor_tflops else "-"
         print(
-            f"{spec.id:<14} {spec.name:<20} {spec.cc[0]}.{spec.cc[1]:>2} "
+            f"{spec.id:<14} {spec.name:<20} {spec.arch_label:>6} "
             f"{spec.sm_count:>5} {spec.vram_gb:>3}GB {p.mem_bandwidth_gbs:>8.0f} "
             f"{p.fp32_tflops:>8.1f} {fp16:>8} {spec.tdp_w:>4}W"
         )
@@ -625,7 +626,10 @@ def cmd_report(args: argparse.Namespace) -> int:
             name=spec.name,
             derived=spec.peaks().as_dict(),
             version=__version__,
-            subtitle=f"{spec.sm_count} SMs, {spec.tdp_w} W, from the spec database",
+            subtitle=(
+                f"{spec.sm_count} {'CUs' if spec.vendor == 'amd' else 'SMs'}, "
+                f"{spec.tdp_w} W, from the spec database"
+            ),
         )
     else:
         try:

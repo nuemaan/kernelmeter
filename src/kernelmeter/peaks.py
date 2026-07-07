@@ -52,6 +52,34 @@ _TF32_TENSOR_FLOPS_PER_SM: dict[tuple[int, int], int] = {
 }
 
 
+# AMD rates per compute unit per clock, by architecture. fp32 includes
+# packed/dual-issue where the hardware has it (CDNA3, RDNA3+); the fp16
+# rate is matrix-core throughput on CDNA and RDNA3+, packed vector math
+# on RDNA2. All verified against vendor spec sheets in the tests.
+_AMD_FP32_OPS_PER_CU: dict[str, int] = {
+    "cdna1": 128, "cdna2": 128, "cdna3": 256,
+    "rdna2": 128, "rdna3": 256, "rdna4": 256,
+}
+_AMD_FP16_OPS_PER_CU: dict[str, int] = {
+    "cdna1": 1024, "cdna2": 1024, "cdna3": 2048,
+    "rdna2": 256, "rdna3": 512, "rdna4": 512,
+}
+
+
+def amd_fp32_tflops(cu_count: int, clock_khz: int, arch: str) -> float | None:
+    rate = _AMD_FP32_OPS_PER_CU.get(arch.lower())
+    if rate is None:
+        return None
+    return rate * cu_count * clock_khz * 1e3 / 1e12
+
+
+def amd_fp16_tflops(cu_count: int, clock_khz: int, arch: str) -> float | None:
+    rate = _AMD_FP16_OPS_PER_CU.get(arch.lower())
+    if rate is None:
+        return None
+    return rate * cu_count * clock_khz * 1e3 / 1e12
+
+
 def _tensor_tflops(table: dict, sm_count: int, clock_khz: int, major: int, minor: int) -> float | None:
     rate = table.get((major, minor))
     if rate is None:

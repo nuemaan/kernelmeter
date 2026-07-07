@@ -41,8 +41,8 @@ required dependencies.
   sheet numbers are never fully reachable.
 * `kernelmeter compare 4090 h100-sxm --ai 0.33` tells you which card is
   actually faster *for your kernel*, and per rental dollar. Works with
-  no GPU at all: there is a built-in database of 31 cards whose specs
-  are unit-tested against the vendor sheets.
+  no GPU at all: there is a built-in database of 40 cards, NVIDIA and
+  AMD, whose specs are unit-tested against the vendor sheets.
 * `kernelmeter llm 70b --quant q4 --gpus 4090 a100-80gb` answers the
   question everyone actually has: does it fit, and what is the hard
   ceiling on tokens per second. Same roofline math, zero benchmarks.
@@ -89,12 +89,22 @@ for this kernel the 4090 delivers more than twice the throughput per
 rental dollar. The overlaid rooflines print below the table so you can
 see *why*: left of every ridge point, only the bandwidth line matters.
 
-`kernelmeter gpus` lists the built-in database (T4 through RTX 5090,
-A100/H100 and the workstation cards). Every entry stores physical
-parameters and derives its peaks through the same formulas used for live
-devices, and the test suite asserts each derived number against the
-vendor spec sheet, so a wrong entry fails CI. `kernelmeter roofline
---gpu 4090` draws any card's roofline the same way.
+`kernelmeter gpus` lists the built-in database: NVIDIA from the T4 to
+the RTX 5090 plus A100/H100 and the workstation cards, and AMD from the
+MI100 to the MI300X plus RX 6900 XT through RX 9070 XT. Every entry
+stores physical parameters (SMs or CUs, clocks, bus width, per-pin rate)
+and derives its peaks through per-architecture rate tables, and the test
+suite asserts each derived number against the vendor spec sheet, so a
+wrong entry fails CI. `kernelmeter roofline --gpu 4090` (or `--gpu
+mi300x`) draws any card's roofline the same way, and cross-vendor
+comparisons just work:
+
+```bash
+kernelmeter llm 70b --quant q4 --gpus mi300x h100-sxm --cost mi300x=2.49,h100-sxm=2.69
+```
+
+puts a 70B on a single MI300X (192 GB, ~131 t/s decode ceiling) against
+a single H100 (fits at 80 GB, ~82 t/s), priced per token.
 
 ## Will it run a 70B, and how fast at best?
 
@@ -433,6 +443,11 @@ whether your kernels are any good:
 * The tensor-core peaks are dense rates with fp16 accumulate. GeForce
   cards run tensor cores at half rate when accumulating in fp32, and
   sparse rates are double; pass `peak_tflops=...` when those apply.
+* AMD cards live in the database only for now: compare, llm, roofline
+  --gpu and report --gpu treat vendors equally, but the live-device
+  commands (info, bench, ceiling) still need CUDA. The fp16 column for
+  AMD is matrix-core throughput on CDNA and RDNA3+, packed vector math
+  on RDNA2.
 * The occupancy command implements the standard calculator model. Real
   occupancy can differ (launch bounds, driver decisions); confirm with
   Nsight Compute when it matters.
